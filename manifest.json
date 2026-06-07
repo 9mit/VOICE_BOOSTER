@@ -1,0 +1,128 @@
+{
+  "manifest_version": 3,
+  "name": "Universal Volume Booster",
+  "version": "1.0.2",
+  "description": "Boost video audio up to 500%+ on YouTube, Netflix, Disney+, JioHotstar, Prime Video, and other platforms using Web Audio gain amplification.",
+  "minimum_chrome_version": "88",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "universal-volume-booster@extensions",
+      "strict_min_version": "120.0"
+    }
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; default-src 'none';"
+  },
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://*.youtube-nocookie.com/*",
+    "https://*.netflix.com/*",
+    "https://*.jiocinema.com/*",
+    "https://*.jiohotstar.com/*",
+    "https://*.disneyplus.com/*",
+    "https://*.hotstar.com/*",
+    "https://*.primevideo.com/*",
+    "https://*.amazon.com/gp/video/*",
+    "https://*.amazon.com/*/video/*",
+    "https://*.amazon.co.uk/gp/video/*",
+    "https://*.amazon.co.uk/*/video/*",
+    "https://*.amazon.de/gp/video/*",
+    "https://*.amazon.de/*/video/*",
+    "https://*.amazon.co.jp/gp/video/*",
+    "https://*.amazon.co.jp/*/video/*",
+    "https://*.amazon.in/gp/video/*",
+    "https://*.amazon.in/*/video/*",
+    "https://*.sonyliv.com/*",
+    "https://*.zee5.com/*",
+    "https://*.hulu.com/*",
+    "https://*.max.com/*",
+    "https://*.hbomax.com/*",
+    "https://tv.apple.com/*",
+    "https://*.tv.apple.com/*",
+    "https://*.peacocktv.com/*",
+    "https://*.paramountplus.com/*",
+    "https://*.crunchyroll.com/*",
+    "https://*.twitch.tv/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Universal Volume Booster"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-booster": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Toggle Volume Booster On/Off"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://*.youtube-nocookie.com/*",
+        "https://*.netflix.com/*",
+        "https://*.jiocinema.com/*",
+        "https://*.jiohotstar.com/*",
+        "https://*.disneyplus.com/*",
+        "https://*.hotstar.com/*",
+        "https://*.primevideo.com/*",
+        "https://*.amazon.com/gp/video/*",
+        "https://*.amazon.com/*/video/*",
+        "https://*.amazon.co.uk/gp/video/*",
+        "https://*.amazon.co.uk/*/video/*",
+        "https://*.amazon.de/gp/video/*",
+        "https://*.amazon.de/*/video/*",
+        "https://*.amazon.co.jp/gp/video/*",
+        "https://*.amazon.co.jp/*/video/*",
+        "https://*.amazon.in/gp/video/*",
+        "https://*.amazon.in/*/video/*",
+        "https://*.sonyliv.com/*",
+        "https://*.zee5.com/*",
+        "https://*.hulu.com/*",
+        "https://*.max.com/*",
+        "https://*.hbomax.com/*",
+        "https://tv.apple.com/*",
+        "https://*.tv.apple.com/*",
+        "https://*.peacocktv.com/*",
+        "https://*.paramountplus.com/*",
+        "https://*.crunchyroll.com/*",
+        "https://*.twitch.tv/*"
+      ],
+      "js": [
+        "platform-detector.js",
+        "audio-engine.js",
+        "spa-navigator.js",
+        "ui-controller.js",
+        "message-bridge.js",
+        "content-script.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

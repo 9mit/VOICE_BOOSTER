@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Universal Volume Booster</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Ambient background glow -->
+  <div class="ambient-bg" id="ambient-glow"></div>
+
+  <div class="popup-container" id="popup-root">
+    <!-- Premium Header -->
+    <header class="header">
+      <div class="logo-group">
+        <div class="logo-icon-wrapper">
+          <svg class="logo-icon" viewBox="0 0 24 24">
+            <path d="M18.5 2L12 10.5h4.5L10 22l6.5-8.5H12L18.5 2z"/>
+          </svg>
+        </div>
+        <h1 class="logo-title">Booster Pro</h1>
+      </div>
+      <div class="header-right">
+        <div class="status-indicator" id="status-badge">OFFLINE</div>
+        <button class="power-btn" id="power-toggle-btn" title="Toggle Volume Booster" aria-label="Toggle Power">
+          <svg class="power-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+            <line x1="12" y1="2" x2="12" y2="12"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      
+      <!-- System DEACTIVATED / Offline State -->
+      <div class="state-container deactivated-container hidden" id="state-deactivated">
+        <div class="power-off-ring">
+          <svg class="power-off-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+            <line x1="12" y1="2" x2="12" y2="12"></line>
+          </svg>
+        </div>
+        <p class="state-title">System Offline</p>
+        <p class="state-subtitle">The audio processing engine is currently disabled.</p>
+        <button class="premium-action-btn primary" id="activate-extension-btn">Enable Booster</button>
+      </div>
+      
+      <!-- Tab with media FOUND state -->
+      <div id="state-active-video" class="hidden">
+        
+        <!-- Central Dial Hero Section -->
+        <div class="hero-dial">
+          <div class="dial-glow" id="simple-booster-glow"></div>
+          <div class="dial-center">
+            <span class="dial-value" id="simple-boost-val-text">100%</span>
+            <span class="dial-label" id="simple-boost-status-label">Normal</span>
+          </div>
+        </div>
+
+        <!-- Slider Section -->
+        <div class="premium-slider-section">
+          <div class="slider-header">
+            <span class="slider-title">Gain Amplification</span>
+            <span class="slider-pct" id="simple-boost-slider-pct">100%</span>
+          </div>
+          <input type="range" class="premium-slider" id="simple-boost-slider" min="1" max="5" step="0.05" value="1" aria-label="Gain Adjuster">
+        </div>
+
+        <!-- Quick Boost Pills -->
+        <div class="pill-presets-grid">
+          <button class="pill-btn simple-preset-btn" data-val="1.0">100%</button>
+          <button class="pill-btn simple-preset-btn" data-val="1.5">150%</button>
+          <button class="pill-btn simple-preset-btn" data-val="2.0">200%</button>
+          <button class="pill-btn simple-preset-btn" data-val="3.0">300%</button>
+          <button class="pill-btn simple-preset-btn danger-pill" data-val="5.0">500%</button>
+        </div>
+
+        <!-- Sound Profiles -->
+        <div class="audio-engine-section">
+          <span class="section-label">Sound Profiles</span>
+          <div class="engine-grid engine-grid-5">
+            <button class="engine-btn simple-profile-btn active" data-simple-mode="flat" title="No EQ processing">
+              <span class="engine-icon">📻</span>Bypass
+            </button>
+            <button class="engine-btn simple-profile-btn" data-simple-mode="cinema" title="Cinematic widening">
+              <span class="engine-icon">🎬</span>Cinema
+            </button>
+            <button class="engine-btn simple-profile-btn" data-simple-mode="speech" title="Clear Vocal focus">
+              <span class="engine-icon">🎙️</span>Vocals
+            </button>
+            <button class="engine-btn simple-profile-btn" data-simple-mode="night" title="Night mode — quiet listening">
+              <span class="engine-icon">🌙</span>Night
+            </button>
+            <button class="engine-btn simple-profile-btn" data-simple-mode="bass" title="Theatre-level deep bass">
+              <span class="engine-icon">🎧</span>Bass
+            </button>
+          </div>
+        </div>
+
+        <!-- Warning overlays -->
+        <div class="glass-warning hidden" id="simple-volume-warning">
+          <svg class="warning-icon" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+          <span>Extreme gain limits dynamic range.</span>
+        </div>
+
+        <div class="glass-warning conflict hidden" id="simple-conflict-warning">
+          <svg class="warning-icon" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+          <span>Interception blocked by competing extension.</span>
+        </div>
+
+        <!-- Actions -->
+        <div class="bottom-actions bottom-actions-single">
+          <button class="premium-action-btn secondary" id="simple-reset-btn" aria-label="Reset">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Tab with video NOT FOUND state -->
+      <div class="state-container" id="state-no-video">
+        <div class="empty-state-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33 2.78 2.78 0 0 0 1.94 2c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.33 29 29 0 0 0-.46-5.33z"></path>
+            <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon>
+          </svg>
+        </div>
+        <p class="state-title">Awaiting Media</p>
+        <p class="state-subtitle" id="no-video-subtitle">Play streaming content on YouTube, Netflix, or Prime Video to begin volume processing.</p>
+        <button class="premium-action-btn secondary" id="retry-btn">Force Scan</button>
+      </div>
+
+    </main>
+
+    <!-- Footer Master Switch -->
+    <footer class="premium-footer">
+      <div class="master-switch-container" id="toggle-group">
+        <span class="switch-label">Global Processor</span>
+        <label class="premium-switch">
+          <input type="checkbox" id="booster-enable" checked aria-label="Toggle booster globally">
+          <span class="switch-track"></span>
+        </label>
+      </div>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
