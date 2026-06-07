@@ -88,7 +88,7 @@ class AudioEngine {
       BOOST_MIN: 1.0,
       BOOST_MAX: 5.0,
       BOOST_SMOOTH_TIME: 0.04, // seconds to ramp gain changes to prevent clicks
-      MAX_SAFE_GAIN: 30.0, // absolute gain ceiling (+29.5dB) to prevent system damage
+      MAX_SAFE_GAIN: 55.0, // absolute gain ceiling (~34.8dB) to allow for extreme profiles
       BASS_FREQ: 150,
       SPEECH_FREQ: 2200,
       VOICE_PRESENCE_FREQ: 3200,
@@ -111,10 +111,10 @@ class AudioEngine {
     // Tuned to be clearly audible without causing distortion or clipping.
     this.PROFILES = {
       flat:    { bass: 0.0, speech: 0.0, treble: 0.0 },
-      cinema:  { bass: 8.0, speech: 2.0, treble: 7.0 },
-      speech:  { bass: -4.0, speech: 9.0, treble: 2.0 },
-      night:   { bass: -2.0, speech: 4.0, treble: -2.0 },
-      bass:    { bass: 14.0, speech: -2.0, treble: 5.0 } // Theatre-level Atmos-style deep bass
+      cinema:  { bass: 12.0, speech: 4.0, treble: 10.0 }, // Massive cinematic impact
+      speech:  { bass: -6.0, speech: 14.0, treble: 4.0 }, // Razor sharp vocals
+      night:   { bass: -4.0, speech: 8.0, treble: -4.0 }, // Distinct whisper mode
+      bass:    { bass: 22.0, speech: -4.0, treble: 8.0 }  // Earth-shattering sub-bass
     };
 
     // Binding helper context
@@ -144,9 +144,10 @@ class AudioEngine {
 
     const dbAnchors = [
       { boost: 1.0, db: 0.0 },
-      { boost: 2.0, db: 12.0 },
-      { boost: 3.0, db: 21.0 },
-      { boost: 5.0, db: 29.5 }
+      { boost: 1.5, db: 8.0 },
+      { boost: 2.0, db: 16.0 },
+      { boost: 3.0, db: 25.0 },
+      { boost: 5.0, db: 34.0 }
     ];
 
     for (let i = 1; i < dbAnchors.length; i++) {
@@ -415,12 +416,12 @@ class AudioEngine {
     let treble = isActive ? profileGains.treble : 0.0;
     let deEsserGain = 0.0;
 
-    // Clamping
-    bass = Math.max(-10, Math.min(18, bass));
-    speech = Math.max(-10, Math.min(15, speech));
-    treble = Math.max(-10, Math.min(12, treble));
-    voicePresence = Math.max(-10, Math.min(10, voicePresence));
-    voiceClarity = Math.max(-10, Math.min(10, voiceClarity));
+    // Clamping limits extended for massive impact
+    bass = Math.max(-12, Math.min(24, bass));
+    speech = Math.max(-12, Math.min(18, speech));
+    treble = Math.max(-12, Math.min(18, treble));
+    voicePresence = Math.max(-10, Math.min(12, voicePresence));
+    voiceClarity = Math.max(-10, Math.min(12, voiceClarity));
 
     if (this.state.bassFilter) { this.state.bassFilter.gain.cancelScheduledValues(now); this.state.bassFilter.gain.setTargetAtTime(bass, now, t); }
     if (this.state.speechFilter) { this.state.speechFilter.gain.cancelScheduledValues(now); this.state.speechFilter.gain.setTargetAtTime(speech, now, t); }

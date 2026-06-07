@@ -1,0 +1,31 @@
+name: Build and Release Chrome Extension
+
+on:
+  push:
+    tags:
+      - 'v*' # Push events matching v*, i.e. v1.0, v20.15.10
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Zip Extension
+        run: |
+          cd src
+          zip -r ../voice-booster-pro.zip ./*
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: voice-booster-pro.zip
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
