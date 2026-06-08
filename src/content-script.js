@@ -407,6 +407,10 @@
     audioEngine.state.boostLevel = clampedVal;
     throttledApplySettings();
 
+    if (!smooth && state.isEnabled && uiController) {
+      uiController.showToast("Booster Active: " + Math.round(clampedVal * 100) + "%");
+    }
+
     if (messageBridge) messageBridge.syncStateToPopup();
   }
 
