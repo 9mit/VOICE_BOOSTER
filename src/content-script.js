@@ -355,6 +355,10 @@
           watchdogMissCount = 0;
           startVideoMutationObserver();
           scanForVideo();
+        } else if (audioEngine && typeof audioEngine.validateGraphIntegrity === "function" && !audioEngine.validateGraphIntegrity()) {
+          // Audio graph is broken — attempt recovery by re-scanning
+          state.videoElement = null;
+          scanForVideo();
         }
         watchdogInterval = setTimeout(runWatchdog, WATCHDOG_BASE_INTERVAL);
       } else {
@@ -376,6 +380,12 @@
   function bindKeyboardShortcuts() {
     window.addEventListener("keydown", function(e) {
       if (!audioEngine) return;
+
+      // Skip shortcuts when user is typing in editable fields
+      var target = e.target;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) {
+        return;
+      }
 
       if (e.ctrlKey && e.shiftKey && e.code === "ArrowUp") {
         if (!state.isEnabled) toggleBooster(true);

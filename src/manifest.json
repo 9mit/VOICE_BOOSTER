@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Universal Volume Booster",
   "version": "1.0.3",
-  "description": "Boost video audio up to 500%+ on YouTube, Netflix, Disney+, JioHotstar, Prime Video, and other platforms using Web Audio gain amplification.",
+  "description": "Boost video audio up to 500% on YouTube, Netflix, Disney+, JioHotstar, Prime Video, and other platforms using Web Audio gain amplification.",
   "minimum_chrome_version": "88",
   "browser_specific_settings": {
     "gecko": {

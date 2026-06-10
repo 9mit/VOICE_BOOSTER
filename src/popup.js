@@ -226,7 +226,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     noVideoContainer.classList.remove("hidden");
     deactivatedContainer.classList.add("hidden");
 
-    popupRoot.className = "popup-container popup-root-theme-flat";
+    popupRoot.className = popupRoot.className.replace(/\bpopup-root-theme-\S+/g, "");
+    popupRoot.classList.add("popup-root-theme-flat");
     popupRoot.classList.remove("active-mode");
 
     if (statusBadge) {

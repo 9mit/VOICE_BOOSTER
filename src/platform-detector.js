@@ -170,7 +170,7 @@ class PlatformDetector {
     if (hostname.includes("disneyplus.com") || hostname.includes("hotstar.com")) {
       return configs.disneyplus;
     }
-    if (hostname.includes("primevideo.com") || hostname === "amazon.com" || hostname.endsWith(".amazon.com") || hostname.endsWith(".amazon.co.uk") || hostname.endsWith(".amazon.de") || hostname.endsWith(".amazon.co.jp") || hostname.endsWith(".amazon.in")) {
+    if (hostname.includes("primevideo.com") || hostname.endsWith(".amazon.com") || hostname.endsWith(".amazon.co.uk") || hostname.endsWith(".amazon.de") || hostname.endsWith(".amazon.co.jp") || hostname.endsWith(".amazon.in")) {
       return configs.primevideo;
     }
     if (hostname.includes("sonyliv.com")) {

@@ -236,6 +236,8 @@ function toggleBoosterGlobal() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "ping") {
     sendResponse({ status: "pong", version: chrome.runtime.getManifest().version });
+    return false; // Synchronous response — close channel immediately
   }
-  return true;
+  // No async responses needed from background for other message types
+  return false;
 });

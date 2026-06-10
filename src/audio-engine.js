@@ -110,11 +110,11 @@ class AudioEngine {
     // EQ profile definitions (Biquad Gains in dB)
     // Tuned to be clearly audible without causing distortion or clipping.
     this.PROFILES = {
-      flat:    { bass: 0.0, speech: 0.0, treble: 0.0 },
-      cinema:  { bass: 12.0, speech: 4.0, treble: 10.0 }, // Massive cinematic impact
-      speech:  { bass: -6.0, speech: 14.0, treble: 4.0 }, // Razor sharp vocals
-      night:   { bass: -4.0, speech: 8.0, treble: -4.0 }, // Distinct whisper mode
-      bass:    { bass: 22.0, speech: -4.0, treble: 8.0 }  // Earth-shattering sub-bass
+      flat:    { bass: 0.0, speech: 0.0, treble: 0.0, deEsser: 0.0 },
+      cinema:  { bass: 12.0, speech: 4.0, treble: 10.0, deEsser: -3.0 }, // Massive cinematic impact + mild sibilance control
+      speech:  { bass: -6.0, speech: 14.0, treble: 4.0, deEsser: -5.0 }, // Razor sharp vocals + sibilance reduction
+      night:   { bass: -4.0, speech: 8.0, treble: -4.0, deEsser: -2.0 }, // Distinct whisper mode + gentle de-essing
+      bass:    { bass: 22.0, speech: -4.0, treble: 8.0, deEsser: 0.0 }   // Earth-shattering sub-bass
     };
 
     // Binding helper context
@@ -414,7 +414,7 @@ class AudioEngine {
     let voicePresence = isActive ? profileGains.speech * 0.5 : 0.0;
     let voiceClarity = isActive ? profileGains.speech * 0.25 : 0.0;
     let treble = isActive ? profileGains.treble : 0.0;
-    let deEsserGain = 0.0;
+    let deEsserGain = isActive ? (profileGains.deEsser || 0.0) : 0.0;
 
     // Clamping limits extended for massive impact
     bass = Math.max(-12, Math.min(24, bass));
@@ -422,6 +422,7 @@ class AudioEngine {
     treble = Math.max(-12, Math.min(18, treble));
     voicePresence = Math.max(-10, Math.min(12, voicePresence));
     voiceClarity = Math.max(-10, Math.min(12, voiceClarity));
+    deEsserGain = Math.max(-10, Math.min(0, deEsserGain));
 
     if (this.state.bassFilter) { this.state.bassFilter.gain.cancelScheduledValues(now); this.state.bassFilter.gain.setTargetAtTime(bass, now, t); }
     if (this.state.speechFilter) { this.state.speechFilter.gain.cancelScheduledValues(now); this.state.speechFilter.gain.setTargetAtTime(speech, now, t); }
@@ -506,6 +507,15 @@ class AudioEngine {
       // Re-engage DSP: apply all stored settings
       this.applyAudioEngineSettings();
     }
+  }
+
+  /**
+   * Public accessor for graph integrity validation.
+   * Returns true if the audio graph appears intact and functional.
+   * @returns {boolean}
+   */
+  validateGraphIntegrity() {
+    return this._validateGraphIntegrity();
   }
 
   /**
