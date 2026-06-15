@@ -424,7 +424,8 @@
     safeStorageSet({ boostLevel: clampedVal });
 
     audioEngine.state.boostLevel = clampedVal;
-    throttledApplySettings();
+    // Direct apply — no throttle. Every boost change must be heard immediately.
+    audioEngine.applyAudioEngineSettings();
 
     if (!smooth && state.isEnabled && uiController) {
       uiController.showToast("Booster Active: " + Math.round(clampedVal * 100) + "%");

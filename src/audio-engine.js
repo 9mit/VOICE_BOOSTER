@@ -1,19 +1,18 @@
 /**
- * Universal Volume Booster Pro - Audio Engine Module (v3.0 Simplified)
+ * Universal Volume Booster Pro - Audio Engine Module (v4.0 Fixed)
  * 
  * Manages the Web Audio API Context and the Digital Signal Processing (DSP) routing chain.
  * Utilizes a WeakMap cache to guarantee a video is intercepted exactly once.
  * Implements smooth gain transitions using AudioParam.setTargetAtTime.
  * 
- * v3.0 Changes (Simplification):
- * - Removed 8D spatializer, crossfeed, immersive headphone DSP, sub-harmonic synthesis
- * - Removed reverb delay network, stereo balance, mono downmix, normalizer
- * - Removed custom EQ overrides (user-adjustable bass/mid/treble sliders)
- * - Streamlined DSP pipeline to a clean linear series path
- * - Retained perceptual dB-mapped gain curve, dynamic de-esser, profile-aware EQ
- * - Retained brickwall limiter for clipping protection
+ * v4.0 Changes (Critical Audio Fix):
+ * - FIXED: Reordered DSP chain so GainNode is BEFORE limiter (was being squashed)
+ * - FIXED: Brickwall limiter threshold now scales dynamically with boost level
+ * - FIXED: Each profile has independent voice presence & clarity values
+ * - FIXED: Compressor operates on boosted signal for proper dynamics control
+ * - FIXED: Profile EQ contrast dramatically increased for audible differences
  * 
- * DSP Routing Pipeline:
+ * DSP Routing Pipeline (CORRECTED):
  * [MediaElementSourceNode]
  *         │
  *         ▼
@@ -35,13 +34,13 @@
  *  [Treble Filter] (BiquadFilterNode - highshelf @ 7kHz)
  *         │
  *         ▼
- *  [DynamicsCompressorNode]  (Profile Dynamics)
- *         │
- *         ▼
  *  [GainNode]  (Output Booster Gain - Perceptual Curve)
  *         │
  *         ▼
- *  [DynamicsCompressorNode]  (Brickwall Limiter: 20:1 at −1dBFS)
+ *  [DynamicsCompressorNode]  (Profile Dynamics — operates on BOOSTED signal)
+ *         │
+ *         ▼
+ *  [DynamicsCompressorNode]  (Brickwall Limiter: dynamic threshold, safety ceiling)
  *         │
  *         ▼
  *  [AudioContext.destination]
@@ -97,24 +96,61 @@ class AudioEngine {
       TREBLE_FREQ: 7000,
       BYPASS_CROSSFADE_TIME: 0.015, // 15ms click-free bypass switching
       
-      // Compressor presets — tuned for meaningful dynamic control per profile.
+      // Compressor presets — now operates on the BOOSTED signal (post-gain).
+      // Tuned for meaningful dynamic control that doesn't fight the gain.
       compPresets: {
-        flat:    { threshold: -12, knee: 20, ratio: 1.5, attack: 0.005, release: 0.15 },
-        cinema:  { threshold: -20, knee: 15, ratio: 3.5, attack: 0.01,  release: 0.25 },
-        speech:  { threshold: -15, knee: 10, ratio: 4.0, attack: 0.003, release: 0.1  },
-        night:   { threshold: -30, knee: 20, ratio: 6.0, attack: 0.003, release: 0.35 },
-        bass:    { threshold: -18, knee: 12, ratio: 3.0, attack: 0.015, release: 0.25 }
+        flat:    { threshold: -6,  knee: 30, ratio: 1.2, attack: 0.01,  release: 0.15 },
+        cinema:  { threshold: -12, knee: 10, ratio: 2.5, attack: 0.01,  release: 0.25 },
+        speech:  { threshold: -10, knee: 8,  ratio: 3.0, attack: 0.003, release: 0.1  },
+        night:   { threshold: -20, knee: 15, ratio: 8.0, attack: 0.003, release: 0.35 },
+        bass:    { threshold: -10, knee: 10, ratio: 2.0, attack: 0.015, release: 0.25 }
       }
     };
 
     // EQ profile definitions (Biquad Gains in dB)
-    // Tuned to be clearly audible without causing distortion or clipping.
+    // Each profile has independent values for every filter.
+    // Tuned to be CLEARLY audible and distinct from each other.
     this.PROFILES = {
-      flat:    { bass: 0.0, speech: 0.0, treble: 0.0, deEsser: 0.0 },
-      cinema:  { bass: 12.0, speech: 4.0, treble: 10.0, deEsser: -3.0 }, // Massive cinematic impact + mild sibilance control
-      speech:  { bass: -6.0, speech: 14.0, treble: 4.0, deEsser: -5.0 }, // Razor sharp vocals + sibilance reduction
-      night:   { bass: -4.0, speech: 8.0, treble: -4.0, deEsser: -2.0 }, // Distinct whisper mode + gentle de-essing
-      bass:    { bass: 22.0, speech: -4.0, treble: 8.0, deEsser: 0.0 }   // Earth-shattering sub-bass
+      flat: {
+        bass: 0.0,
+        speech: 0.0,
+        voicePresence: 0.0,
+        voiceClarity: 0.0,
+        treble: 0.0,
+        deEsser: 0.0
+      },
+      cinema: {
+        bass: 14.0,        // Deep cinematic rumble
+        speech: 3.0,       // Slight dialog push
+        voicePresence: 2.0, // Subtle presence
+        voiceClarity: 1.0,  // Light air
+        treble: 10.0,      // Bright sparkly highs
+        deEsser: -3.0      // Mild sibilance taming
+      },
+      speech: {
+        bass: -8.0,         // Cut bass to reduce rumble/music
+        speech: 16.0,       // Massive vocal boost at 2.2kHz
+        voicePresence: 10.0, // Strong 3.2kHz presence for clarity
+        voiceClarity: 8.0,   // High shelf for airiness
+        treble: 2.0,        // Gentle top-end
+        deEsser: -6.0       // Strong sibilance control
+      },
+      night: {
+        bass: -6.0,         // Reduce low-end rumble
+        speech: 10.0,       // Boost dialog significantly
+        voicePresence: 6.0, // Push presence so whispers are clear
+        voiceClarity: 4.0,  // Add clarity
+        treble: -6.0,       // Reduce harsh highs for comfort
+        deEsser: -4.0       // Moderate de-essing
+      },
+      bass: {
+        bass: 24.0,         // Earth-shattering sub-bass
+        speech: -2.0,       // Slight vocal dip (let bass dominate)
+        voicePresence: 0.0, // Neutral
+        voiceClarity: 0.0,  // Neutral
+        treble: 6.0,        // Crisp highs to balance the bass weight
+        deEsser: 0.0
+      }
     };
 
     // Binding helper context
@@ -165,6 +201,17 @@ class AudioEngine {
     }
 
     return this.PARAMS.MAX_SAFE_GAIN;
+  }
+
+  /**
+   * Computes the dB value of the current gain for limiter threshold calculation.
+   * @param {number} boost - Raw boost level (1.0 to 5.0)
+   * @returns {number} Gain in dB
+   */
+  _computeGainInDb(boost) {
+    const gain = this._computePerceptualGain(boost);
+    if (gain <= 0) return 0;
+    return 20 * Math.log10(gain);
   }
 
   /**
@@ -264,14 +311,15 @@ class AudioEngine {
         this.state.gainNode = ctx.createGain();
       }
 
-      // 3. Initialize Brickwall Limiter (clipping protection)
+      // 3. Initialize Brickwall Limiter (clipping protection — LAST in chain)
       if (!this.state.brickwallLimiter) {
         this.state.brickwallLimiter = ctx.createDynamicsCompressor();
-        this.state.brickwallLimiter.threshold.value = -1.0;  // -1 dBFS ceiling
-        this.state.brickwallLimiter.knee.value = 1.5;
+        // Threshold is set dynamically in applyAudioEngineSettings()
+        this.state.brickwallLimiter.threshold.value = -1.0;
+        this.state.brickwallLimiter.knee.value = 2.0;
         this.state.brickwallLimiter.ratio.value = 20.0;
         this.state.brickwallLimiter.attack.value = 0.001;
-        this.state.brickwallLimiter.release.value = 0.06;
+        this.state.brickwallLimiter.release.value = 0.05;
       }
 
       // 4. Initialize Equalizer BiquadFilters
@@ -323,7 +371,11 @@ class AudioEngine {
         this.state.compressorNode = ctx.createDynamicsCompressor();
       }
 
-      // 7. Connect the linear DSP pipeline (exactly once)
+      // 7. Connect the CORRECTED linear DSP pipeline (exactly once)
+      //    Source → EQ → GainNode → Compressor → Limiter → Destination
+      //
+      //    KEY FIX: GainNode is now BEFORE the limiter, not after.
+      //    The limiter threshold is set dynamically to allow boosted signal through.
       if (!this.state.graphConnected) {
         // EQ Series
         this.state.bassFilter.connect(this.state.speechFilter);
@@ -332,10 +384,10 @@ class AudioEngine {
         this.state.voiceClarityFilter.connect(this.state.deEsserFilter);
         this.state.deEsserFilter.connect(this.state.trebleFilter);
 
-        // Treble -> Compressor -> Gain -> Limiter -> Destination
-        this.state.trebleFilter.connect(this.state.compressorNode);
-        this.state.compressorNode.connect(this.state.gainNode);
-        this.state.gainNode.connect(this.state.brickwallLimiter);
+        // Treble → Gain → Compressor → Limiter → Destination
+        this.state.trebleFilter.connect(this.state.gainNode);
+        this.state.gainNode.connect(this.state.compressorNode);
+        this.state.compressorNode.connect(this.state.brickwallLimiter);
         this.state.brickwallLimiter.connect(ctx.destination);
 
         this.state.graphConnected = true;
@@ -386,6 +438,7 @@ class AudioEngine {
 
   /**
    * Applies the current DSP settings onto the respective Audio Nodes.
+   * This is the core function that makes boost and profiles actually work.
    */
   applyAudioEngineSettings() {
     if (!this.state.audioContext || this.state.audioContext.state === 'closed') return;
@@ -405,7 +458,7 @@ class AudioEngine {
       this.state.gainNode.gain.setTargetAtTime(targetGain, now, this.PARAMS.BOOST_SMOOTH_TIME);
     }
 
-    // 2. EQ Filter Processing
+    // 2. EQ Filter Processing — each profile has independent values for all filters
     const safeProfile = ["flat", "cinema", "speech", "night", "bass"].includes(this.state.audioProfile)
       ? this.state.audioProfile
       : "flat";
@@ -413,18 +466,18 @@ class AudioEngine {
 
     let bass = isActive ? profileGains.bass : 0.0;
     let speech = isActive ? profileGains.speech : 0.0;
-    let voicePresence = isActive ? profileGains.speech * 0.5 : 0.0;
-    let voiceClarity = isActive ? profileGains.speech * 0.25 : 0.0;
+    let voicePresence = isActive ? profileGains.voicePresence : 0.0;
+    let voiceClarity = isActive ? profileGains.voiceClarity : 0.0;
     let treble = isActive ? profileGains.treble : 0.0;
     let deEsserGain = isActive ? (profileGains.deEsser || 0.0) : 0.0;
 
-    // Clamping limits extended for massive impact
-    bass = Math.max(-12, Math.min(24, bass));
-    speech = Math.max(-12, Math.min(18, speech));
-    treble = Math.max(-12, Math.min(18, treble));
-    voicePresence = Math.max(-10, Math.min(12, voicePresence));
-    voiceClarity = Math.max(-10, Math.min(12, voiceClarity));
-    deEsserGain = Math.max(-10, Math.min(0, deEsserGain));
+    // Clamping limits — generous to allow dramatic differences
+    bass = Math.max(-15, Math.min(30, bass));
+    speech = Math.max(-15, Math.min(20, speech));
+    treble = Math.max(-15, Math.min(20, treble));
+    voicePresence = Math.max(-12, Math.min(15, voicePresence));
+    voiceClarity = Math.max(-12, Math.min(15, voiceClarity));
+    deEsserGain = Math.max(-12, Math.min(0, deEsserGain));
 
     if (this.state.bassFilter) { this.state.bassFilter.gain.cancelScheduledValues(now); this.state.bassFilter.gain.setTargetAtTime(bass, now, t); }
     if (this.state.speechFilter) { this.state.speechFilter.gain.cancelScheduledValues(now); this.state.speechFilter.gain.setTargetAtTime(speech, now, t); }
@@ -433,7 +486,7 @@ class AudioEngine {
     if (this.state.deEsserFilter) { this.state.deEsserFilter.gain.cancelScheduledValues(now); this.state.deEsserFilter.gain.setTargetAtTime(deEsserGain, now, t); }
     if (this.state.trebleFilter) { this.state.trebleFilter.gain.cancelScheduledValues(now); this.state.trebleFilter.gain.setTargetAtTime(treble, now, t); }
 
-    // 3. Compressor & Limiter
+    // 3. Compressor — operates on the BOOSTED signal
     if (isActive) {
       if (this.state.compressorNode) {
         const preset = this.PARAMS.compPresets[safeProfile];
@@ -448,9 +501,24 @@ class AudioEngine {
         this.state.compressorNode.release.cancelScheduledValues(now);
         this.state.compressorNode.release.setTargetAtTime(preset.release, now, t);
       }
+
+      // 4. Brickwall Limiter — DYNAMIC threshold that scales with boost
+      //
+      //    KEY FIX: The limiter threshold must allow the boosted signal through.
+      //    At 100% (0dB gain), threshold = -1dBFS (standard ceiling).
+      //    At 200% (~12dB gain), threshold = ~8dBFS — lets the boost through,
+      //    only clipping extreme transient peaks that exceed the boost target.
+      //    At 500% (~34dB gain), threshold = ~28dBFS.
+      //
+      //    Formula: limiterThreshold = gainInDb - headroomDb
+      //    headroomDb is the safety margin (6dB) to prevent only extreme peaks.
       if (this.state.brickwallLimiter) {
+        const gainDb = this._computeGainInDb(rawBoost);
+        const headroom = 6.0; // dB of headroom above the target gain
+        const limiterThreshold = Math.max(-1.0, gainDb - headroom);
+        
         this.state.brickwallLimiter.threshold.cancelScheduledValues(now);
-        this.state.brickwallLimiter.threshold.setTargetAtTime(-1.0, now, t);
+        this.state.brickwallLimiter.threshold.setTargetAtTime(limiterThreshold, now, t);
         this.state.brickwallLimiter.ratio.cancelScheduledValues(now);
         this.state.brickwallLimiter.ratio.setTargetAtTime(20.0, now, t);
       }
@@ -504,6 +572,13 @@ class AudioEngine {
         this.state.compressorNode.threshold.setTargetAtTime(0, now, t);
         this.state.compressorNode.ratio.cancelScheduledValues(now);
         this.state.compressorNode.ratio.setTargetAtTime(1.0, now, t);
+      }
+      // Transparent limiter
+      if (this.state.brickwallLimiter) {
+        this.state.brickwallLimiter.threshold.cancelScheduledValues(now);
+        this.state.brickwallLimiter.threshold.setTargetAtTime(0, now, t);
+        this.state.brickwallLimiter.ratio.cancelScheduledValues(now);
+        this.state.brickwallLimiter.ratio.setTargetAtTime(1.0, now, t);
       }
     } else {
       // Re-engage DSP: apply all stored settings
