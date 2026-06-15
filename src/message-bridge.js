@@ -21,11 +21,26 @@ class MessageBridge {
   }
 
   /**
+   * Helper to check if the extension context is still active and valid.
+   * Prevents runtime errors when content scripts are orphaned after an update.
+   * @returns {boolean}
+   */
+  _isValidContext() {
+    return typeof chrome !== "undefined" && chrome.runtime && !!chrome.runtime.id;
+  }
+
+  /**
    * Begins runtime message observations.
    */
   init() {
+    if (!this._isValidContext()) return;
+
     this.listener = (message, sender, sendResponse) => {
       try {
+        if (!this._isValidContext()) {
+          return false;
+        }
+
         // Accept messages from extension context (popup, background) only.
         const isExtensionMessage = sender.id === chrome.runtime.id;
 
@@ -101,7 +116,11 @@ class MessageBridge {
       }
     };
 
-    chrome.runtime.onMessage.addListener(this.listener);
+    try {
+      chrome.runtime.onMessage.addListener(this.listener);
+    } catch (e) {
+      // Suppress connection errors during reload
+    }
   }
 
   /**
@@ -124,13 +143,14 @@ class MessageBridge {
    * Broadcasts the current volume booster settings state to the popup.
    */
   syncStateToPopup() {
+    if (!this._isValidContext()) return;
     try {
       chrome.runtime.sendMessage({
         action: "statusUpdate",
         status: this.getSerializedStatus()
       }, () => {
         // Suppress expected errors if the popup is closed
-        if (chrome.runtime.lastError) { /* expected */ }
+        if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.lastError) { /* expected */ }
       });
     } catch (err) {
       // context invalidated or other runtime issues
@@ -141,8 +161,12 @@ class MessageBridge {
    * Clears bindings.
    */
   destroy() {
-    if (this.listener) {
-      chrome.runtime.onMessage.removeListener(this.listener);
+    if (this.listener && this._isValidContext()) {
+      try {
+        chrome.runtime.onMessage.removeListener(this.listener);
+      } catch (err) {
+        // context invalidated
+      }
       this.listener = null;
     }
   }

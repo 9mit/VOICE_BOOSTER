@@ -75,6 +75,9 @@ class AudioEngine {
       // Brickwall Limiter
       brickwallLimiter: null,
       
+      // Makeup Gain Compensator
+      compensatorNode: null,
+      
       graphConnected: false
     };
 
@@ -96,22 +99,23 @@ class AudioEngine {
       TREBLE_FREQ: 7000,
       BYPASS_CROSSFADE_TIME: 0.015, // 15ms click-free bypass switching
       
-      // Compressor presets — now operates on the BOOSTED signal (post-gain).
-      // Tuned for meaningful dynamic control that doesn't fight the gain.
+      // Compressor presets — now acts as a master maximizer/limiter (post-gain).
+      // Tuned with slow release and wide knee to prevent low-frequency tracking distortion ("farting").
       compPresets: {
-        flat:    { threshold: -6,  knee: 30, ratio: 1.2, attack: 0.01,  release: 0.15 },
-        cinema:  { threshold: -12, knee: 10, ratio: 2.5, attack: 0.01,  release: 0.25 },
-        speech:  { threshold: -10, knee: 8,  ratio: 3.0, attack: 0.003, release: 0.1  },
-        night:   { threshold: -20, knee: 15, ratio: 8.0, attack: 0.003, release: 0.35 },
-        bass:    { threshold: -10, knee: 10, ratio: 2.0, attack: 0.015, release: 0.25 }
+        flat:    { threshold: -12, knee: 30, ratio: 2.0, attack: 0.010, release: 0.25 },
+        cinema:  { threshold: -12, knee: 30, ratio: 2.5, attack: 0.010, release: 0.25 },
+        speech:  { threshold: -10, knee: 25, ratio: 3.0, attack: 0.003, release: 0.20 },
+        night:   { threshold: -18, knee: 30, ratio: 5.0, attack: 0.003, release: 0.30 },
+        bass:    { threshold: -12, knee: 30, ratio: 2.0, attack: 0.015, release: 0.25 }
       }
     };
 
     // EQ profile definitions (Biquad Gains in dB)
-    // Each profile has independent values for every filter.
+    // Each profile has independent values for every filter and a preamp offset to prevent clipping (VLC method).
     // Tuned to be CLEARLY audible and distinct from each other.
     this.PROFILES = {
       flat: {
+        preamp: 0.0,
         bass: 0.0,
         speech: 0.0,
         voicePresence: 0.0,
@@ -120,38 +124,43 @@ class AudioEngine {
         deEsser: 0.0
       },
       cinema: {
-        bass: 14.0,        // Deep cinematic rumble
-        speech: 3.0,       // Slight dialog push
-        voicePresence: 2.0, // Subtle presence
-        voiceClarity: 1.0,  // Light air
-        treble: 10.0,      // Bright sparkly highs
-        deEsser: -3.0      // Mild sibilance taming
+        preamp: -3.0,       // Preamp attenuation to compensate for boosts
+        bass: 10.0,        // Cinema bass rumble (controlled)
+        speech: 2.0,       // Slight dialog push
+        voicePresence: 1.0, // Subtle presence
+        voiceClarity: 0.5,  // Light air
+        treble: 6.0,       // Bright sparkly highs
+        deEsser: -2.0      // Mild sibilance taming
       },
       speech: {
-        bass: -8.0,         // Cut bass to reduce rumble/music
-        speech: 16.0,       // Massive vocal boost at 2.2kHz
-        voicePresence: 10.0, // Strong 3.2kHz presence for clarity
-        voiceClarity: 8.0,   // High shelf for airiness
-        treble: 2.0,        // Gentle top-end
-        deEsser: -6.0       // Strong sibilance control
+        preamp: -5.0,       // Preamp to compensate for vocal boost (+12dB)
+        bass: -4.0,         // Cut bass to reduce rumble/music
+        speech: 12.0,       // Vocal boost at 2.2kHz
+        voicePresence: 8.0,  // Strong 3.2kHz presence for clarity
+        voiceClarity: 6.0,   // High shelf for airiness
+        treble: 1.0,        // Gentle top-end
+        deEsser: -4.0       // Strong sibilance control
       },
       night: {
-        bass: -6.0,         // Reduce low-end rumble
-        speech: 10.0,       // Boost dialog significantly
-        voicePresence: 6.0, // Push presence so whispers are clear
-        voiceClarity: 4.0,  // Add clarity
-        treble: -6.0,       // Reduce harsh highs for comfort
-        deEsser: -4.0       // Moderate de-essing
+        preamp: -3.0,       // Preamp to compensate for vocal boost (+8dB)
+        bass: -4.0,         // Reduce low-end rumble
+        speech: 8.0,        // Boost dialog significantly
+        voicePresence: 4.0, // Push presence so whispers are clear
+        voiceClarity: 2.0,  // Add clarity
+        treble: -4.0,       // Reduce harsh highs for comfort
+        deEsser: -3.0       // Moderate de-essing
       },
       bass: {
-        bass: 24.0,         // Earth-shattering sub-bass
-        speech: -2.0,       // Slight vocal dip (let bass dominate)
+        preamp: -5.0,       // Preamp attenuation (VLC method) to prevent distortion
+        bass: 12.0,         // Clean, solid bass boost
+        speech: -1.0,       // Slight vocal dip
         voicePresence: 0.0, // Neutral
         voiceClarity: 0.0,  // Neutral
-        treble: 6.0,        // Crisp highs to balance the bass weight
+        treble: 3.0,        // Crisp highs to balance
         deEsser: 0.0
       }
     };
+
 
     // Binding helper context
     this.resumeAudioContext = this.resumeAudioContext.bind(this);
@@ -178,41 +187,24 @@ class AudioEngine {
       ? Math.max(this.PARAMS.BOOST_MIN, Math.min(this.PARAMS.BOOST_MAX, boost))
       : this.PARAMS.BOOST_MIN;
 
-    const dbAnchors = [
-      { boost: 1.0, db: 0.0 },
-      { boost: 1.5, db: 8.0 },
-      { boost: 2.0, db: 16.0 },
-      { boost: 3.0, db: 25.0 },
-      { boost: 5.0, db: 34.0 }
-    ];
-
-    for (let i = 1; i < dbAnchors.length; i++) {
-      const start = dbAnchors[i - 1];
-      const end = dbAnchors[i];
-
-      if (safeBoost <= end.boost) {
-        const range = end.boost - start.boost;
-        const t = (safeBoost - start.boost) / range;
-        const smoothT = t * t * (3 - 2 * t);
-        const db = start.db + ((end.db - start.db) * smoothT);
-        const gain = Math.pow(10, db / 20);
-        return Math.min(gain, this.PARAMS.MAX_SAFE_GAIN);
-      }
-    }
-
-    return this.PARAMS.MAX_SAFE_GAIN;
+    // Linear-to-dB mapping: 1.0 -> 0dB, 5.0 -> 14dB (exactly 5.0x linear multiplier)
+    const db = (safeBoost - 1.0) * 3.5;
+    const gain = Math.pow(10, db / 20);
+    return Math.min(gain, this.PARAMS.MAX_SAFE_GAIN);
   }
 
   /**
-   * Computes the dB value of the current gain for limiter threshold calculation.
+   * Computes the dB value of the current gain.
    * @param {number} boost - Raw boost level (1.0 to 5.0)
    * @returns {number} Gain in dB
    */
   _computeGainInDb(boost) {
-    const gain = this._computePerceptualGain(boost);
-    if (gain <= 0) return 0;
-    return 20 * Math.log10(gain);
+    const safeBoost = Number.isFinite(boost)
+      ? Math.max(this.PARAMS.BOOST_MIN, Math.min(this.PARAMS.BOOST_MAX, boost))
+      : this.PARAMS.BOOST_MIN;
+    return (safeBoost - 1.0) * 3.5;
   }
+
 
   /**
    * Resumes the AudioContext safely to satisfy autoplay policies.
@@ -314,12 +306,16 @@ class AudioEngine {
       // 3. Initialize Brickwall Limiter (clipping protection — LAST in chain)
       if (!this.state.brickwallLimiter) {
         this.state.brickwallLimiter = ctx.createDynamicsCompressor();
-        // Threshold is set dynamically in applyAudioEngineSettings()
         this.state.brickwallLimiter.threshold.value = -1.0;
         this.state.brickwallLimiter.knee.value = 2.0;
         this.state.brickwallLimiter.ratio.value = 20.0;
         this.state.brickwallLimiter.attack.value = 0.001;
         this.state.brickwallLimiter.release.value = 0.05;
+      }
+
+      // 3b. Initialize Makeup Gain Compensator
+      if (!this.state.compensatorNode) {
+        this.state.compensatorNode = ctx.createGain();
       }
 
       // 4. Initialize Equalizer BiquadFilters
@@ -372,10 +368,14 @@ class AudioEngine {
       }
 
       // 7. Connect the CORRECTED linear DSP pipeline (exactly once)
-      //    Source → EQ → GainNode → Compressor → Limiter → Destination
+      //    Source → EQ → Compressor → GainNode → Limiter → Compensator → Destination
       //
-      //    KEY FIX: GainNode is now BEFORE the limiter, not after.
-      //    The limiter threshold is set dynamically to allow boosted signal through.
+      //    KEY REDESIGN: 
+      //    - EQ shapes the frequency response.
+      //    - Compressor shapes profile dynamics (e.g. Night mode).
+      //    - GainNode applies the master boost (perceptual scaling).
+      //    - Limiter acts as the final safety ceiling.
+      //    - Compensator counteracts the compressor's automatic makeup gain to prevent clipping.
       if (!this.state.graphConnected) {
         // EQ Series
         this.state.bassFilter.connect(this.state.speechFilter);
@@ -384,11 +384,12 @@ class AudioEngine {
         this.state.voiceClarityFilter.connect(this.state.deEsserFilter);
         this.state.deEsserFilter.connect(this.state.trebleFilter);
 
-        // Treble → Gain → Compressor → Limiter → Destination
-        this.state.trebleFilter.connect(this.state.gainNode);
-        this.state.gainNode.connect(this.state.compressorNode);
-        this.state.compressorNode.connect(this.state.brickwallLimiter);
-        this.state.brickwallLimiter.connect(ctx.destination);
+        // Treble → Compressor → GainNode → Limiter → Compensator → Destination
+        this.state.trebleFilter.connect(this.state.compressorNode);
+        this.state.compressorNode.connect(this.state.gainNode);
+        this.state.gainNode.connect(this.state.brickwallLimiter);
+        this.state.brickwallLimiter.connect(this.state.compensatorNode);
+        this.state.compensatorNode.connect(ctx.destination);
 
         this.state.graphConnected = true;
       }
@@ -449,27 +450,32 @@ class AudioEngine {
 
     const isActive = this.state.isEnabled && !this.state.isConflictDetected;
 
-    // 1. Output Boost Volume
-    const rawBoost = isActive ? this.state.boostLevel : 1.0;
-    const computedGain = this._computePerceptualGain(rawBoost);
-    const targetGain = Math.min(computedGain, this.PARAMS.MAX_SAFE_GAIN);
-    if (this.state.gainNode) {
-      this.state.gainNode.gain.cancelScheduledValues(now);
-      this.state.gainNode.gain.setTargetAtTime(targetGain, now, this.PARAMS.BOOST_SMOOTH_TIME);
-    }
-
-    // 2. EQ Filter Processing — each profile has independent values for all filters
+    // Load active EQ profile
     const safeProfile = ["flat", "cinema", "speech", "night", "bass"].includes(this.state.audioProfile)
       ? this.state.audioProfile
       : "flat";
     const profileGains = this.PROFILES[safeProfile];
 
-    let bass = isActive ? profileGains.bass : 0.0;
-    let speech = isActive ? profileGains.speech : 0.0;
-    let voicePresence = isActive ? profileGains.voicePresence : 0.0;
-    let voiceClarity = isActive ? profileGains.voiceClarity : 0.0;
-    let treble = isActive ? profileGains.treble : 0.0;
-    let deEsserGain = isActive ? (profileGains.deEsser || 0.0) : 0.0;
+    // 1. Output Boost Volume (Master Volume Boost)
+    const rawBoost = isActive ? this.state.boostLevel : 1.0;
+    const computedGain = this._computePerceptualGain(rawBoost);
+    const targetGain = Math.min(computedGain, this.PARAMS.MAX_SAFE_GAIN);
+
+    if (this.state.gainNode) {
+      this.state.gainNode.gain.cancelScheduledValues(now);
+      this.state.gainNode.gain.setTargetAtTime(targetGain, now, this.PARAMS.BOOST_SMOOTH_TIME);
+    }
+
+    // 2. EQ Filter Processing with Preamp Headroom (VLC method)
+    // We add the negative preampDb to all filters to scale down the signal before the compressor/limiter
+    const preampDb = isActive ? (profileGains.preamp || 0.0) : 0.0;
+
+    let bass = isActive ? (profileGains.bass + preampDb) : 0.0;
+    let speech = isActive ? (profileGains.speech + preampDb) : 0.0;
+    let voicePresence = isActive ? (profileGains.voicePresence + preampDb) : 0.0;
+    let voiceClarity = isActive ? (profileGains.voiceClarity + preampDb) : 0.0;
+    let treble = isActive ? (profileGains.treble + preampDb) : 0.0;
+    let deEsserGain = isActive ? ((profileGains.deEsser || 0.0) + preampDb) : 0.0;
 
     // Clamping limits — generous to allow dramatic differences
     bass = Math.max(-15, Math.min(30, bass));
@@ -486,7 +492,8 @@ class AudioEngine {
     if (this.state.deEsserFilter) { this.state.deEsserFilter.gain.cancelScheduledValues(now); this.state.deEsserFilter.gain.setTargetAtTime(deEsserGain, now, t); }
     if (this.state.trebleFilter) { this.state.trebleFilter.gain.cancelScheduledValues(now); this.state.trebleFilter.gain.setTargetAtTime(treble, now, t); }
 
-    // 3. Compressor — operates on the BOOSTED signal
+    // 3. Compressor — operates on the pre-gain signal
+    let compensationGain = 1.0;
     if (isActive) {
       if (this.state.compressorNode) {
         const preset = this.PARAMS.compPresets[safeProfile];
@@ -501,27 +508,31 @@ class AudioEngine {
         this.state.compressorNode.release.cancelScheduledValues(now);
         this.state.compressorNode.release.setTargetAtTime(preset.release, now, t);
       }
-
-      // 4. Brickwall Limiter — DYNAMIC threshold that scales with boost
-      //
-      //    KEY FIX: The limiter threshold must allow the boosted signal through.
-      //    At 100% (0dB gain), threshold = -1dBFS (standard ceiling).
-      //    At 200% (~12dB gain), threshold = ~8dBFS — lets the boost through,
-      //    only clipping extreme transient peaks that exceed the boost target.
-      //    At 500% (~34dB gain), threshold = ~28dBFS.
-      //
-      //    Formula: limiterThreshold = gainInDb - headroomDb
-      //    headroomDb is the safety margin (6dB) to prevent only extreme peaks.
       if (this.state.brickwallLimiter) {
-        const gainDb = this._computeGainInDb(rawBoost);
-        const headroom = 6.0; // dB of headroom above the target gain
-        const limiterThreshold = Math.max(-1.0, gainDb - headroom);
-        
         this.state.brickwallLimiter.threshold.cancelScheduledValues(now);
-        this.state.brickwallLimiter.threshold.setTargetAtTime(limiterThreshold, now, t);
+        this.state.brickwallLimiter.threshold.setTargetAtTime(-1.0, now, t);
+        this.state.brickwallLimiter.knee.cancelScheduledValues(now);
+        this.state.brickwallLimiter.knee.setTargetAtTime(2.0, now, t);
         this.state.brickwallLimiter.ratio.cancelScheduledValues(now);
         this.state.brickwallLimiter.ratio.setTargetAtTime(20.0, now, t);
+        this.state.brickwallLimiter.attack.cancelScheduledValues(now);
+        this.state.brickwallLimiter.attack.setTargetAtTime(0.001, now, t);
+        this.state.brickwallLimiter.release.cancelScheduledValues(now);
+        this.state.brickwallLimiter.release.setTargetAtTime(0.05, now, t);
       }
+
+      // Compute automatic makeup gains:
+      // DynamicsCompressor makeup gain formula in dB:
+      // makeup_gain = -0.5 * threshold * (1 - 1 / ratio)
+      const preset = this.PARAMS.compPresets[safeProfile];
+      const compMakeupDb = -0.5 * preset.threshold * (1.0 - 1.0 / preset.ratio);
+      
+      const limiterThreshold = -1.0;
+      const limiterRatio = 20.0;
+      const limiterMakeupDb = -0.5 * limiterThreshold * (1.0 - 1.0 / limiterRatio);
+
+      const totalMakeupDb = compMakeupDb + limiterMakeupDb;
+      compensationGain = Math.pow(10, -totalMakeupDb / 20);
     } else {
       // Completely transparent when disabled
       if (this.state.compressorNode) {
@@ -536,6 +547,11 @@ class AudioEngine {
         this.state.brickwallLimiter.ratio.cancelScheduledValues(now);
         this.state.brickwallLimiter.ratio.setTargetAtTime(1.0, now, t);
       }
+    }
+
+    if (this.state.compensatorNode) {
+      this.state.compensatorNode.gain.cancelScheduledValues(now);
+      this.state.compensatorNode.gain.setTargetAtTime(compensationGain, now, t);
     }
   }
 
@@ -580,6 +596,11 @@ class AudioEngine {
         this.state.brickwallLimiter.ratio.cancelScheduledValues(now);
         this.state.brickwallLimiter.ratio.setTargetAtTime(1.0, now, t);
       }
+      // Transparent compensator
+      if (this.state.compensatorNode) {
+        this.state.compensatorNode.gain.cancelScheduledValues(now);
+        this.state.compensatorNode.gain.setTargetAtTime(1.0, now, t);
+      }
     } else {
       // Re-engage DSP: apply all stored settings
       this.applyAudioEngineSettings();
@@ -613,6 +634,7 @@ class AudioEngine {
     this.state.deEsserFilter = null;
     this.state.compressorNode = null;
     this.state.brickwallLimiter = null;
+    this.state.compensatorNode = null;
     this.state.graphConnected = false;
     this.state.isConflictDetected = false;
   }
