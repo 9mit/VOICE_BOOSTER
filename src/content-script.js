@@ -42,6 +42,7 @@
   let watchdogInterval = null;
   let videoScanRetryTimer = null;
   let videoMutationObserver = null;
+  let keydownHandler = null;
 
   /**
    * Safe wrapper for chrome.storage.local.set that logs quota/write errors.
@@ -91,9 +92,12 @@
 
         if (result) {
           try {
-            if (result.boostLevel !== undefined) state.boostLevel = Math.max(1, Math.min(10, parseFloat(result.boostLevel)));
+            if (result.boostLevel !== undefined) state.boostLevel = Math.max(1.0, Math.min(5.0, parseFloat(result.boostLevel)));
             if (result.isEnabled !== undefined) state.isEnabled = !!result.isEnabled;
-            if (result.audioProfile !== undefined) state.audioProfile = result.audioProfile;
+            if (result.audioProfile !== undefined) {
+              const validProfiles = ["flat", "cinema", "speech", "night", "bass"];
+              state.audioProfile = validProfiles.includes(result.audioProfile) ? result.audioProfile : "flat";
+            }
           } catch (parseErr) {
             // Settings parse error - using defaults
           }
@@ -193,6 +197,10 @@
       if (spaNavigator && typeof spaNavigator.destroy === "function") spaNavigator.destroy();
       if (uiController && typeof uiController.destroy === "function") uiController.destroy();
       if (messageBridge && typeof messageBridge.destroy === "function") messageBridge.destroy();
+      if (keydownHandler) {
+        window.removeEventListener("keydown", keydownHandler);
+        keydownHandler = null;
+      }
       window.removeEventListener("beforeunload", window.__uvb_cleanup);
     };
     window.addEventListener("beforeunload", window.__uvb_cleanup);
@@ -378,7 +386,7 @@
   // ─── User Interactions ────────────────────────────────────────────────────────
 
   function bindKeyboardShortcuts() {
-    window.addEventListener("keydown", function(e) {
+    keydownHandler = function(e) {
       if (!audioEngine) return;
 
       // Skip shortcuts when user is typing in editable fields
@@ -401,7 +409,8 @@
         uiController.showToast("Boost Down: " + Math.round(nextDown * 100) + "%");
         e.preventDefault();
       }
-    });
+    };
+    window.addEventListener("keydown", keydownHandler);
   }
 
   // ─── State Mutation Functions ─────────────────────────────────────────────────

@@ -71,6 +71,10 @@ chrome.runtime.onInstalled.addListener((details) => {
       boostLevel: 1.0,
       isEnabled: true,
       audioProfile: "flat"
+    }, () => {
+      if (chrome.runtime.lastError) {
+        // Storage write failed (e.g. quota exceeded) — defaults will be used at runtime
+      }
     });
   } else if (details.reason === "update") {
     // Extension updated - continue with injection
@@ -113,30 +117,38 @@ chrome.alarms.onAlarm.addListener((alarm) => {
  * "OFFLINE after reload" bug — Chrome's declarative content_scripts only
  * run on NEW navigations, not on tabs that were already open.
  */
-let _injectionInProgress = false;
+let _injectionPromise = null;
 
 async function injectIntoExistingTabs() {
-  if (_injectionInProgress) return;
-  _injectionInProgress = true;
+  // Promise-based lock: if injection is already in progress, await it rather than skip
+  if (_injectionPromise) {
+    await _injectionPromise;
+    return;
+  }
+
+  _injectionPromise = (async () => {
+    try {
+      // Single query for all patterns — replaces 28 serial queries
+      const tabs = await chrome.tabs.query({ url: STREAMING_PATTERNS });
+      if (!tabs || tabs.length === 0) return;
+
+      // Fire all tab injections in parallel
+      const injectionPromises = [];
+      for (const tab of tabs) {
+        // Skip chrome:// internal pages, PDF viewer, etc.
+        if (!tab.id || !tab.url || tab.url.startsWith("chrome://")) continue;
+        injectionPromises.push(injectIntoTab(tab.id));
+      }
+      await Promise.allSettled(injectionPromises);
+    } catch (err) {
+      // Tab query failed — this is fine
+    }
+  })();
 
   try {
-    for (const pattern of STREAMING_PATTERNS) {
-      try {
-        const tabs = await chrome.tabs.query({ url: pattern });
-        if (!tabs || tabs.length === 0) continue;
-
-        for (const tab of tabs) {
-          // Skip chrome:// internal pages, PDF viewer, etc.
-          if (!tab.id || !tab.url || tab.url.startsWith("chrome://")) continue;
-
-          injectIntoTab(tab.id);
-        }
-      } catch (err) {
-        // Pattern might not match any tabs — this is fine
-      }
-    }
+    await _injectionPromise;
   } finally {
-    _injectionInProgress = false;
+    _injectionPromise = null;
   }
 }
 
@@ -152,7 +164,7 @@ async function injectIntoTab(tabId) {
     let settled = false;
     const timeoutId = setTimeout(() => {
       if (!settled) { settled = true; resolve(false); }
-    }, 800);
+    }, 300); // Reduced from 800ms — content scripts respond in <50ms if alive
 
     try {
       chrome.tabs.sendMessage(tabId, { action: "ping" }, (response) => {
@@ -209,22 +221,22 @@ chrome.commands.onCommand.addListener((command) => {
  */
 function toggleBoosterGlobal() {
   chrome.storage.local.get(["isEnabled"], (result) => {
+    if (chrome.runtime.lastError) return;
     const current = (result && result.isEnabled !== undefined) ? !!result.isEnabled : true;
     const next = !current;
 
     chrome.storage.local.set({ isEnabled: next }, () => {
-      // Broadcast to all streaming tabs
-      STREAMING_PATTERNS.forEach((pattern) => {
-        chrome.tabs.query({ url: pattern }, (tabs) => {
-          if (chrome.runtime.lastError || !tabs) return;
-          tabs.forEach((tab) => {
-            if (!tab.id) return;
-            try {
-              chrome.tabs.sendMessage(tab.id, { action: "toggleEnable", value: next }, () => {
-                if (chrome.runtime.lastError) { /* tab doesn't have content script */ }
-              });
-            } catch (e) { /* tab closed */ }
-          });
+      if (chrome.runtime.lastError) return;
+      // Single query for all streaming tabs — replaces 28 serial queries
+      chrome.tabs.query({ url: STREAMING_PATTERNS }, (tabs) => {
+        if (chrome.runtime.lastError || !tabs) return;
+        tabs.forEach((tab) => {
+          if (!tab.id) return;
+          try {
+            chrome.tabs.sendMessage(tab.id, { action: "toggleEnable", value: next }, () => {
+              if (chrome.runtime.lastError) { /* tab doesn't have content script */ }
+            });
+          } catch (e) { /* tab closed */ }
         });
       });
     });

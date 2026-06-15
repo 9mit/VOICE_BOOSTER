@@ -16,7 +16,7 @@
     "scripting"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; default-src 'none';"
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; default-src 'none';"
   },
   "host_permissions": [
     "https://*.youtube.com/*",

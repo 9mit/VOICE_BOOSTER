@@ -354,7 +354,9 @@ class AudioEngine {
           this.connectedVideos.set(video, { sourceNode: videoSource });
         } catch (err) {
           const errMsg = (err && err.message) || "";
-          if (errMsg.includes("already connected")) {
+          const errName = (err && err.name) || "";
+          // Chrome: "already connected", Firefox: "InvalidStateError"
+          if (errMsg.includes("already connected") || errName === "InvalidStateError") {
             this.connectedVideos.set(video, { sourceNode: null, isFallback: true });
           } else {
             throw err;
@@ -526,6 +528,18 @@ class AudioEngine {
       this.state.audioContext.close().catch(() => {});
     }
     this.state.audioContext = null;
+    this.state.sourceNode = null;
+    this.state.gainNode = null;
+    this.state.bassFilter = null;
+    this.state.speechFilter = null;
+    this.state.trebleFilter = null;
+    this.state.voicePresenceFilter = null;
+    this.state.voiceClarityFilter = null;
+    this.state.deEsserFilter = null;
+    this.state.compressorNode = null;
+    this.state.brickwallLimiter = null;
+    this.state.graphConnected = false;
+    this.state.isConflictDetected = false;
   }
 }
 

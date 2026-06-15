@@ -21,6 +21,10 @@ class SPANavigator {
     this.lastUrl = window.location.href;
     this._originalPushState = null;
     this._originalReplaceState = null;
+    this._popstateHandler = null;
+    this._hashchangeHandler = null;
+    // Local fallback for container selector — avoids mutating shared config
+    this._containerSelectorOverride = null;
     
     this.setupHistoryAPIOverride();
     this.setupEventListeners();
@@ -47,12 +51,15 @@ class SPANavigator {
       };
       history.pushState.__uvbPatched = true;
 
-      // Patch replaceState
-      const originalReplaceState = history.replaceState;
-      history.replaceState = function(...args) {
-        originalReplaceState.apply(this, args);
-        self.handleUrlChange("replaceState");
-      };
+      // Patch replaceState (with separate guard)
+      if (!history.replaceState.__uvbPatched) {
+        const originalReplaceState = history.replaceState;
+        history.replaceState = function(...args) {
+          originalReplaceState.apply(this, args);
+          self.handleUrlChange("replaceState");
+        };
+        history.replaceState.__uvbPatched = true;
+      }
     } catch (err) {
       // History API override failed, relying on DOM observers
     }
@@ -62,8 +69,10 @@ class SPANavigator {
    * Attaches listeners for standard browser popstate and hashchange navigation actions.
    */
   setupEventListeners() {
-    window.addEventListener("popstate", () => this.handleUrlChange("popstate"));
-    window.addEventListener("hashchange", () => this.handleUrlChange("hashchange"));
+    this._popstateHandler = () => this.handleUrlChange("popstate");
+    this._hashchangeHandler = () => this.handleUrlChange("hashchange");
+    window.addEventListener("popstate", this._popstateHandler);
+    window.addEventListener("hashchange", this._hashchangeHandler);
   }
 
   /**
@@ -72,13 +81,14 @@ class SPANavigator {
   setupContainerObserver() {
     this.disconnectObserver();
 
-    const selector = this.config.containerSelector || "body";
+    const selector = this._containerSelectorOverride || this.config.containerSelector || "body";
     const container = document.querySelector(selector);
 
     if (!container) {
       this.containerRetryCount = (this.containerRetryCount || 0) + 1;
       if (this.containerRetryCount > 10) {
-        this.config.containerSelector = "body";
+        // Use local override instead of mutating the shared config object
+        this._containerSelectorOverride = "body";
         this.containerRetryCount = 0;
         this.setupContainerObserver();
         return;
@@ -191,6 +201,15 @@ class SPANavigator {
    */
   destroy() {
     this.disconnectObserver();
+    // Remove stored event listeners
+    if (this._popstateHandler) {
+      window.removeEventListener("popstate", this._popstateHandler);
+      this._popstateHandler = null;
+    }
+    if (this._hashchangeHandler) {
+      window.removeEventListener("hashchange", this._hashchangeHandler);
+      this._hashchangeHandler = null;
+    }
     // Restore original History API methods if we patched them
     if (this._originalPushState) {
       try { history.pushState = this._originalPushState; } catch (e) {}

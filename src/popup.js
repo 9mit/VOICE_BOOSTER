@@ -77,7 +77,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         powerToggleBtn.title = "Activate Volume Booster";
       }
 
-      popupRoot.className = popupRoot.className.replace(/\bpopup-root-theme-\S+/g, "");
+      popupRoot.classList.forEach(cls => {
+        if (cls.startsWith('popup-root-theme-')) popupRoot.classList.remove(cls);
+      });
       popupRoot.classList.add("popup-root-theme-flat");
       popupRoot.classList.remove("active-mode");
 
@@ -114,7 +116,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 2. Set dynamic theme class on root container
     const activeTheme = state.isEnabled ? state.audioProfile : "flat";
     
-    popupRoot.className = popupRoot.className.replace(/\bpopup-root-theme-\S+/g, "");
+    popupRoot.classList.forEach(cls => {
+      if (cls.startsWith('popup-root-theme-')) popupRoot.classList.remove(cls);
+    });
     popupRoot.classList.add(`popup-root-theme-${activeTheme}`);
 
     const percentage = Math.round(state.boostLevel * 100);
@@ -226,7 +230,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     noVideoContainer.classList.remove("hidden");
     deactivatedContainer.classList.add("hidden");
 
-    popupRoot.className = popupRoot.className.replace(/\bpopup-root-theme-\S+/g, "");
+    popupRoot.classList.forEach(cls => {
+      if (cls.startsWith('popup-root-theme-')) popupRoot.classList.remove(cls);
+    });
     popupRoot.classList.add("popup-root-theme-flat");
     popupRoot.classList.remove("active-mode");
 
@@ -345,6 +351,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     const pctText = `${Math.round(val * 100)}%`;
     if (dialValueText && state.isEnabled) dialValueText.textContent = pctText;
     if (sliderPctText) sliderPctText.textContent = pctText;
+
+    // Update full UI state during drag (dial, warnings, preset highlights)
+    renderPopupUI();
 
     if (!sliderRafPending) {
       sliderRafPending = true;

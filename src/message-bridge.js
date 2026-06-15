@@ -65,6 +65,11 @@ class MessageBridge {
 
           case "setAudioProfile":
             if (message.value) {
+              const validProfiles = ["flat", "cinema", "speech", "night", "bass"];
+              if (!validProfiles.includes(message.value)) {
+                sendResponse({ success: false, error: "Invalid audio profile." });
+                break;
+              }
               this.callbacks.setAudioProfile(message.value);
               sendResponse({ success: true, audioProfile: this.state.audioProfile });
             } else {

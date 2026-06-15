@@ -30,7 +30,7 @@ class UIController {
 
       const parser = new DOMParser();
       const parsedDoc = parser.parseFromString(`
-        <div id="wrapper">
+        <div id="uvb-toast-wrapper">
           <svg class="toast-icon" viewBox="0 0 24 24">
             <path d="M18.5 2L12 10.5h4.5L10 22l6.5-8.5H12L18.5 2z"/>
           </svg>
@@ -38,7 +38,7 @@ class UIController {
         </div>
       `, "text/html");
 
-      const wrapper = parsedDoc.getElementById("wrapper");
+      const wrapper = parsedDoc.getElementById("uvb-toast-wrapper");
       if (wrapper) {
         while (wrapper.firstChild) {
           this.toastElement.appendChild(wrapper.firstChild);
