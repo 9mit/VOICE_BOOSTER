@@ -1,6 +1,6 @@
-# Volume Booster Pro — Engineering & Architecture Document
+# Volumify — Engineering & Architecture Document
 
-This document outlines the technical architecture, digital signal processing (DSP) math, barrier resolutions, and core engineering concepts used to build the **Volume Booster Pro — Sound Booster & Equalizer** browser extension.
+This document outlines the technical architecture, digital signal processing (DSP) math, barrier resolutions, and core engineering concepts used to build the **Volumify: Volume Booster & Sound Equalizer** browser extension.
 
 ---
 
@@ -93,4 +93,4 @@ if (!this.connectedVideos.has(video)) {
 ---
 
 ## 4. Summary
-Volume Booster Pro is not just a volume multiplier. It is a highly robust, memory-safe, zero-latency Digital Signal Processing unit. By combining Web Audio mathematical compensators with aggressive DOM observation and Manifest V3 lifecycle management, it delivers a flawless, distortion-free audio experience on any streaming platform.
+Volumify is not just a volume multiplier. It is a highly robust, memory-safe, zero-latency Digital Signal Processing unit. By combining Web Audio mathematical compensators with aggressive DOM observation and Manifest V3 lifecycle management, it delivers a flawless, distortion-free audio experience on any streaming platform.

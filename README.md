@@ -1,4 +1,4 @@
-# Volume Booster Pro — Sound Booster & Equalizer
+# Volumify: Volume Booster & Sound Equalizer
 
 A lightweight, powerful, and secure Chrome Extension built with Manifest V3 that allows you to seamlessly boost the volume of HTML5 video and audio streams up to 500% without distortion.
 

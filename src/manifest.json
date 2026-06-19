@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Volume Booster Pro — Sound Booster & Equalizer",
+  "name": "Volumify: Volume Booster & Sound Equalizer",
   "version": "1.0.3",
-  "description": "Boost volume up to 500% with this powerful sound booster and audio equalizer. Perfect for YouTube, Netflix, Prime Video, and Twitch.",
+  "description": "Boost volume up to 500% with Volumify sound booster and audio equalizer. Perfect for YouTube, Netflix, Prime Video, and Twitch.",
   "minimum_chrome_version": "88",
   "browser_specific_settings": {
     "gecko": {
@@ -57,7 +57,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Volume Booster Pro — Sound Booster & Equalizer"
+    "default_title": "Volumify: Volume Booster & Sound Equalizer"
   },
   "background": {
     "service_worker": "background.js"
