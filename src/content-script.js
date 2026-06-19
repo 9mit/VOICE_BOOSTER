@@ -44,20 +44,38 @@
   let videoMutationObserver = null;
   let keydownHandler = null;
 
+  let _storagePendingData = null;
+  let _storageWriteScheduled = false;
+
   /**
-   * Safe wrapper for chrome.storage.local.set that logs quota/write errors.
+   * Safe wrapper for chrome.storage.local.set that aggregates writes
+   * and limits them to at most once per 250ms to prevent quota exhaustion.
    * @param {Object} data - Key-value pairs to persist.
    */
   function safeStorageSet(data) {
-    try {
-      chrome.storage.local.set(data, function() {
-        if (chrome.runtime.lastError) {
-          // Storage write error - continue silently
-        }
-      });
-    } catch (err) {
-      // Storage write failed - continue silently
+    if (!_storagePendingData) {
+      _storagePendingData = {};
     }
+    Object.assign(_storagePendingData, data);
+
+    if (_storageWriteScheduled) return;
+    _storageWriteScheduled = true;
+
+    setTimeout(function() {
+      _storageWriteScheduled = false;
+      const dataToWrite = _storagePendingData;
+      _storagePendingData = null;
+
+      try {
+        chrome.storage.local.set(dataToWrite, function() {
+          if (chrome.runtime.lastError) {
+            // Storage write error - continue silently
+          }
+        });
+      } catch (err) {
+        // Storage write failed - continue silently
+      }
+    }, 250);
   }
 
   /**

@@ -77,6 +77,7 @@ class AudioEngine {
       
       // Makeup Gain Compensator
       compensatorNode: null,
+      compressorCompensatorNode: null,
       
       graphConnected: false
     };
@@ -102,7 +103,7 @@ class AudioEngine {
       // Compressor presets — now acts as a master maximizer/limiter (post-gain).
       // Tuned with slow release and wide knee to prevent low-frequency tracking distortion ("farting").
       compPresets: {
-        flat:    { threshold: -12, knee: 30, ratio: 2.0, attack: 0.010, release: 0.25 },
+        flat:    { threshold: 0, knee: 30, ratio: 1.0, attack: 0.010, release: 0.25 },
         cinema:  { threshold: -12, knee: 30, ratio: 2.5, attack: 0.010, release: 0.25 },
         speech:  { threshold: -10, knee: 25, ratio: 3.0, attack: 0.003, release: 0.20 },
         night:   { threshold: -18, knee: 30, ratio: 5.0, attack: 0.003, release: 0.30 },
@@ -187,8 +188,10 @@ class AudioEngine {
       ? Math.max(this.PARAMS.BOOST_MIN, Math.min(this.PARAMS.BOOST_MAX, boost))
       : this.PARAMS.BOOST_MIN;
 
-    // Linear-to-dB mapping: 1.0 -> 0dB, 5.0 -> 14dB (exactly 5.0x linear multiplier)
-    const db = (safeBoost - 1.0) * 3.5;
+    // Polynomial curve to match comment targets:
+    // 1.0 -> 0.0dB (1.00x), 2.0 -> 12.0dB (3.98x), 3.0 -> 21.0dB (11.22x), 5.0 -> 29.5dB (29.85x)
+    const x = safeBoost - 1.0;
+    const db = 13.54 * x - 1.54 * x * x;
     const gain = Math.pow(10, db / 20);
     return Math.min(gain, this.PARAMS.MAX_SAFE_GAIN);
   }
@@ -202,7 +205,8 @@ class AudioEngine {
     const safeBoost = Number.isFinite(boost)
       ? Math.max(this.PARAMS.BOOST_MIN, Math.min(this.PARAMS.BOOST_MAX, boost))
       : this.PARAMS.BOOST_MIN;
-    return (safeBoost - 1.0) * 3.5;
+    const x = safeBoost - 1.0;
+    return 13.54 * x - 1.54 * x * x;
   }
 
 
@@ -318,6 +322,11 @@ class AudioEngine {
         this.state.compensatorNode = ctx.createGain();
       }
 
+      // 3c. Initialize Compressor Makeup Gain Compensator
+      if (!this.state.compressorCompensatorNode) {
+        this.state.compressorCompensatorNode = ctx.createGain();
+      }
+
       // 4. Initialize Equalizer BiquadFilters
       if (!this.state.bassFilter) {
         this.state.bassFilter = ctx.createBiquadFilter();
@@ -384,9 +393,10 @@ class AudioEngine {
         this.state.voiceClarityFilter.connect(this.state.deEsserFilter);
         this.state.deEsserFilter.connect(this.state.trebleFilter);
 
-        // Treble → Compressor → GainNode → Limiter → Compensator → Destination
+        // Treble → Compressor → CompressorCompensator → GainNode → Limiter → Compensator → Destination
         this.state.trebleFilter.connect(this.state.compressorNode);
-        this.state.compressorNode.connect(this.state.gainNode);
+        this.state.compressorNode.connect(this.state.compressorCompensatorNode);
+        this.state.compressorCompensatorNode.connect(this.state.gainNode);
         this.state.gainNode.connect(this.state.brickwallLimiter);
         this.state.brickwallLimiter.connect(this.state.compensatorNode);
         this.state.compensatorNode.connect(ctx.destination);
@@ -428,6 +438,9 @@ class AudioEngine {
         video.addEventListener("play", this.resumeAudioContext);
         video.removeEventListener("playing", this.resumeAudioContext);
         video.addEventListener("playing", this.resumeAudioContext);
+
+        // Attempt immediate resume in case video is already playing or user has interacted
+        this.resumeAudioContext();
       }
 
     } catch (err) {
@@ -443,6 +456,9 @@ class AudioEngine {
    */
   applyAudioEngineSettings() {
     if (!this.state.audioContext || this.state.audioContext.state === 'closed') return;
+
+    // Resume context on user interaction/settings application
+    this.resumeAudioContext();
 
     const ctx = this.state.audioContext;
     const now = ctx.currentTime;
@@ -493,7 +509,8 @@ class AudioEngine {
     if (this.state.trebleFilter) { this.state.trebleFilter.gain.cancelScheduledValues(now); this.state.trebleFilter.gain.setTargetAtTime(treble, now, t); }
 
     // 3. Compressor — operates on the pre-gain signal
-    let compensationGain = 1.0;
+    let compCompensationGain = 1.0;
+    let limiterCompensationGain = 1.0;
     if (isActive) {
       if (this.state.compressorNode) {
         const preset = this.PARAMS.compPresets[safeProfile];
@@ -522,8 +539,6 @@ class AudioEngine {
       }
 
       // Compute automatic makeup gains:
-      // DynamicsCompressor makeup gain formula in dB:
-      // makeup_gain = -0.5 * threshold * (1 - 1 / ratio)
       const preset = this.PARAMS.compPresets[safeProfile];
       const compMakeupDb = -0.5 * preset.threshold * (1.0 - 1.0 / preset.ratio);
       
@@ -531,8 +546,8 @@ class AudioEngine {
       const limiterRatio = 20.0;
       const limiterMakeupDb = -0.5 * limiterThreshold * (1.0 - 1.0 / limiterRatio);
 
-      const totalMakeupDb = compMakeupDb + limiterMakeupDb;
-      compensationGain = Math.pow(10, -totalMakeupDb / 20);
+      compCompensationGain = Math.pow(10, -compMakeupDb / 20);
+      limiterCompensationGain = Math.pow(10, -limiterMakeupDb / 20);
     } else {
       // Completely transparent when disabled
       if (this.state.compressorNode) {
@@ -549,9 +564,14 @@ class AudioEngine {
       }
     }
 
+    if (this.state.compressorCompensatorNode) {
+      this.state.compressorCompensatorNode.gain.cancelScheduledValues(now);
+      this.state.compressorCompensatorNode.gain.setTargetAtTime(compCompensationGain, now, t);
+    }
+
     if (this.state.compensatorNode) {
       this.state.compensatorNode.gain.cancelScheduledValues(now);
-      this.state.compensatorNode.gain.setTargetAtTime(compensationGain, now, t);
+      this.state.compensatorNode.gain.setTargetAtTime(limiterCompensationGain, now, t);
     }
   }
 
@@ -601,6 +621,11 @@ class AudioEngine {
         this.state.compensatorNode.gain.cancelScheduledValues(now);
         this.state.compensatorNode.gain.setTargetAtTime(1.0, now, t);
       }
+      // Transparent compressor compensator
+      if (this.state.compressorCompensatorNode) {
+        this.state.compressorCompensatorNode.gain.cancelScheduledValues(now);
+        this.state.compressorCompensatorNode.gain.setTargetAtTime(1.0, now, t);
+      }
     } else {
       // Re-engage DSP: apply all stored settings
       this.applyAudioEngineSettings();
@@ -635,6 +660,7 @@ class AudioEngine {
     this.state.compressorNode = null;
     this.state.brickwallLimiter = null;
     this.state.compensatorNode = null;
+    this.state.compressorCompensatorNode = null;
     this.state.graphConnected = false;
     this.state.isConflictDetected = false;
   }
