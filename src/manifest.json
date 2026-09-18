@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Volumify: Volume Booster & Sound Equalizer",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Boost volume up to 500% with Volumify sound booster & equalizer. Perfect for YouTube, Spotify, Netflix, Prime Video, and Twitch.",
   "minimum_chrome_version": "88",
   "browser_specific_settings": {
