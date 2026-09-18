@@ -58,6 +58,13 @@ class MessageBridge {
             sendResponse(this.getSerializedStatus());
             break;
 
+          case "forceScan":
+            if (typeof this.callbacks.scanForVideo === "function") {
+              this.callbacks.scanForVideo();
+            }
+            sendResponse(this.getSerializedStatus());
+            break;
+
           case "setBoost":
             if (typeof message.value === "number") {
               const safeBoost = Math.min(Math.max(message.value, 1.0), 5.0);

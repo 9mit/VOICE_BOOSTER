@@ -78,21 +78,6 @@
     }, 250);
   }
 
-  /**
-   * Throttled wrapper for audioEngine.applyAudioEngineSettings().
-   * Limits DSP recalculations to at most 30 calls/second to reduce CPU load
-   * during rapid slider drags (which fire 60+ input events/sec).
-   */
-  let _applySettingsScheduled = false;
-  function throttledApplySettings() {
-    if (!audioEngine) return;
-    if (_applySettingsScheduled) return;
-    _applySettingsScheduled = true;
-    setTimeout(function() {
-      _applySettingsScheduled = false;
-      if (audioEngine) audioEngine.applyAudioEngineSettings();
-    }, 33); // ~30Hz
-  }
 
   /**
    * Loads persisted settings from local storage with comprehensive error handling.
@@ -162,6 +147,7 @@
         setBoost: setBoost,
         toggleBooster: toggleBooster,
         setAudioProfile: setAudioProfile,
+        scanForVideo: scanForVideo,
         getPlatformId: function() { return platformConfig.id; },
         getPlatformName: function() { return platformConfig.name; }
       });
@@ -193,7 +179,10 @@
         // 10. Start mutation observer to catch dynamically injected video elements
         startVideoMutationObserver();
 
-        // 11. Register cleanup handler for page navigation/tab close
+        // 11. Bind multi-tab storage synchronization
+        bindStorageSync();
+
+        // 12. Register cleanup handler for page navigation/tab close
         registerCleanup();
       });
 
@@ -207,6 +196,70 @@
 
   // ─── Cleanup ─────────────────────────────────────────────────────────────────
 
+  let storageChangeListener = null;
+
+  function bindStorageSync() {
+    if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.onChanged) return;
+
+    storageChangeListener = function(changes, areaName) {
+      if (areaName !== "local") return;
+
+      let stateChanged = false;
+
+      if (changes.boostLevel && changes.boostLevel.newValue !== undefined) {
+        const val = parseFloat(changes.boostLevel.newValue);
+        if (!isNaN(val)) {
+          const minB = audioEngine ? audioEngine.PARAMS.BOOST_MIN : 1.0;
+          const maxB = audioEngine ? audioEngine.PARAMS.BOOST_MAX : 5.0;
+          const clamped = Math.min(Math.max(val, minB), maxB);
+          if (clamped !== state.boostLevel) {
+            state.boostLevel = clamped;
+            if (audioEngine) {
+              audioEngine.state.boostLevel = clamped;
+              audioEngine.applyAudioEngineSettings();
+            }
+            stateChanged = true;
+          }
+        }
+      }
+
+      if (changes.isEnabled && changes.isEnabled.newValue !== undefined) {
+        const en = !!changes.isEnabled.newValue;
+        if (en !== state.isEnabled) {
+          state.isEnabled = en;
+          if (audioEngine) {
+            audioEngine.state.isEnabled = en;
+            if (typeof audioEngine.setBypassMode === "function") {
+              audioEngine.setBypassMode(!en);
+            } else {
+              audioEngine.applyAudioEngineSettings();
+            }
+          }
+          stateChanged = true;
+        }
+      }
+
+      if (changes.audioProfile && changes.audioProfile.newValue !== undefined) {
+        const prof = changes.audioProfile.newValue;
+        const validProfiles = ["flat", "cinema", "speech", "night", "bass"];
+        if (validProfiles.includes(prof) && prof !== state.audioProfile) {
+          state.audioProfile = prof;
+          if (audioEngine) {
+            audioEngine.state.audioProfile = prof;
+            audioEngine.applyAudioEngineSettings();
+          }
+          stateChanged = true;
+        }
+      }
+
+      if (stateChanged && messageBridge) {
+        messageBridge.syncStateToPopup();
+      }
+    };
+
+    chrome.storage.onChanged.addListener(storageChangeListener);
+  }
+
   function registerCleanup() {
     window.__uvb_cleanup = function() {
       if (watchdogInterval) clearTimeout(watchdogInterval);
@@ -215,9 +268,19 @@
       if (spaNavigator && typeof spaNavigator.destroy === "function") spaNavigator.destroy();
       if (uiController && typeof uiController.destroy === "function") uiController.destroy();
       if (messageBridge && typeof messageBridge.destroy === "function") messageBridge.destroy();
+      if (storageChangeListener && typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+        chrome.storage.onChanged.removeListener(storageChangeListener);
+        storageChangeListener = null;
+      }
       if (keydownHandler) {
         window.removeEventListener("keydown", keydownHandler);
         keydownHandler = null;
+      }
+      if (_storagePendingData && typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+        try {
+          chrome.storage.local.set(_storagePendingData);
+          _storagePendingData = null;
+        } catch (e) {}
       }
       window.removeEventListener("beforeunload", window.__uvb_cleanup);
     };
@@ -262,8 +325,9 @@
       return;
     }
 
+    var isAudioElement = primaryVideo.tagName === "AUDIO";
     var rect = primaryVideo.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) {
+    if (!isAudioElement && rect.width === 0 && rect.height === 0) {
       if (attempt < 10) {
         var delay = Math.min(500 * (attempt + 1), 3000);
         videoScanRetryTimer = setTimeout(function() {
@@ -300,8 +364,12 @@
     var candidates = videos;
 
     if (platformConfig.id === "youtube") {
+      var isShortsRoute = window.location.pathname.startsWith("/shorts");
       var filtered = videos.filter(function(vid) {
-        return !vid.closest("ytd-video-preview, #inline-preview-player, ytd-thumbnail, #shorts-player");
+        if (!isShortsRoute && vid.closest("#shorts-player, ytd-reel-shelf-renderer, ytd-rich-shelf-renderer")) {
+          return false;
+        }
+        return !vid.closest("ytd-video-preview, #inline-preview-player, ytd-thumbnail");
       });
       if (filtered.length > 0) {
         candidates = filtered;
@@ -311,6 +379,10 @@
     var best = null;
     var bestArea = 0;
     candidates.forEach(function(candidate) {
+      if (!candidate.paused || candidate.readyState >= 2) {
+        best = candidate;
+        return;
+      }
       var r = candidate.getBoundingClientRect();
       var area = r.width * r.height;
       if (area > bestArea) {
@@ -347,8 +419,9 @@
         for (var j = 0; j < added.length; j++) {
           var node = added[j];
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          if (node.tagName === "VIDEO") { found = true; break; }
-          if (node.childElementCount > 0 && node.querySelector("video")) { found = true; break; }
+          if (node.tagName === "VIDEO" || node.tagName === "AUDIO") { found = true; break; }
+          var mediaSelector = platformConfig.videoSelector || "video, audio";
+          if (node.childElementCount > 0 && node.querySelector(mediaSelector)) { found = true; break; }
         }
         if (found) break;
       }
@@ -415,14 +488,14 @@
 
       if (e.ctrlKey && e.shiftKey && e.code === "ArrowUp") {
         if (!state.isEnabled) toggleBooster(true);
-        var nextUp = Math.min(state.boostLevel + 0.1, audioEngine.PARAMS.BOOST_MAX);
+        var nextUp = Math.round(Math.min(state.boostLevel + 0.1, audioEngine.PARAMS.BOOST_MAX) * 10) / 10;
         setBoost(nextUp, true);
         uiController.showToast("Boost Up: " + Math.round(nextUp * 100) + "%");
         e.preventDefault();
       }
       
       if (e.ctrlKey && e.shiftKey && e.code === "ArrowDown") {
-        var nextDown = Math.max(state.boostLevel - 0.1, audioEngine.PARAMS.BOOST_MIN);
+        var nextDown = Math.round(Math.max(state.boostLevel - 0.1, audioEngine.PARAMS.BOOST_MIN) * 10) / 10;
         setBoost(nextDown, true);
         uiController.showToast("Boost Down: " + Math.round(nextDown * 100) + "%");
         e.preventDefault();

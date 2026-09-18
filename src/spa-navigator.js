@@ -73,6 +73,14 @@ class SPANavigator {
     this._hashchangeHandler = () => this.handleUrlChange("hashchange");
     window.addEventListener("popstate", this._popstateHandler);
     window.addEventListener("hashchange", this._hashchangeHandler);
+
+    if (this.config && this.config.id === "youtube") {
+      this._ytNavigateHandler = () => {
+        this.lastUrl = window.location.href;
+        this.debounceTrigger("yt-navigate-finish");
+      };
+      window.addEventListener("yt-navigate-finish", this._ytNavigateHandler);
+    }
   }
 
   /**
@@ -120,7 +128,7 @@ class SPANavigator {
             const node = added[i];
             if (node.nodeType !== Node.ELEMENT_NODE) continue;
             // Fast tag check first, expensive querySelector only for containers
-            if (node.tagName === "VIDEO" || (node.childElementCount > 0 && node.querySelector(videoSelector))) {
+            if (node.tagName === "VIDEO" || node.tagName === "AUDIO" || (node.childElementCount > 0 && node.querySelector(videoSelector))) {
               shouldTrigger = true;
               break;
             }
@@ -187,14 +195,6 @@ class SPANavigator {
     }
   }
 
-  /**
-   * Re-evaluates container observation when platform configuration updates.
-   * @param {Object} newConfig - The newly loaded platform configuration.
-   */
-  updateConfig(newConfig) {
-    this.config = newConfig;
-    this.setupContainerObserver();
-  }
 
   /**
    * Fully cleans up state event listeners.
@@ -209,6 +209,10 @@ class SPANavigator {
     if (this._hashchangeHandler) {
       window.removeEventListener("hashchange", this._hashchangeHandler);
       this._hashchangeHandler = null;
+    }
+    if (this._ytNavigateHandler) {
+      window.removeEventListener("yt-navigate-finish", this._ytNavigateHandler);
+      this._ytNavigateHandler = null;
     }
     // Restore original History API methods if we patched them
     if (this._originalPushState) {

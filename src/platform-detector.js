@@ -137,6 +137,15 @@ class PlatformDetector {
         navigationDetection: "mutationobserver",
         reinitDelay: 800
       },
+      spotify: {
+        id: "spotify",
+        name: "Spotify",
+        videoSelector: "audio, video",
+        playerContainerSelector: "[data-testid='now-playing-widget'], .Root__now-playing-bar, footer, body",
+        containerSelector: "body, #main, .Root__main-view",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
       generic: {
         id: "generic",
         name: "Generic Site",
@@ -170,7 +179,7 @@ class PlatformDetector {
     if (hostname.includes("disneyplus.com") || hostname.includes("hotstar.com")) {
       return configs.disneyplus;
     }
-    if (hostname.includes("primevideo.com") || hostname.endsWith(".amazon.com") || hostname.endsWith(".amazon.co.uk") || hostname.endsWith(".amazon.de") || hostname.endsWith(".amazon.co.jp") || hostname.endsWith(".amazon.in")) {
+    if (hostname.includes("primevideo.com") || /(^|\.)amazon\.(com|co\.uk|de|co\.jp|in)$/.test(hostname)) {
       return configs.primevideo;
     }
     if (hostname.includes("sonyliv.com")) {
@@ -199,6 +208,9 @@ class PlatformDetector {
     }
     if (hostname.includes("twitch.tv")) {
       return configs.twitch;
+    }
+    if (hostname.includes("spotify.com")) {
+      return configs.spotify;
     }
 
     // Generic site fallback

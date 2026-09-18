@@ -24,6 +24,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const activeVideoContainer = document.getElementById("state-active-video");
   const noVideoContainer = document.getElementById("state-no-video");
   const deactivatedContainer = document.getElementById("state-deactivated");
+  const deactivatedTitle = document.getElementById("deactivated-title");
+  const deactivatedSubtitle = document.getElementById("deactivated-subtitle");
   const statusBadge = document.getElementById("status-badge");
   const noVideoSubtitle = document.getElementById("no-video-subtitle");
   
@@ -72,9 +74,19 @@ document.addEventListener("DOMContentLoaded", async () => {
       noVideoContainer.classList.add("hidden");
       deactivatedContainer.classList.remove("hidden");
 
+      if (state.isConflictDetected) {
+        if (deactivatedTitle) deactivatedTitle.textContent = "Stream Intercepted";
+        if (deactivatedSubtitle) deactivatedSubtitle.textContent = "Another extension has already intercepted this video's audio stream. Disable competing volume or equalizer extensions and refresh the page.";
+        if (activateBtn) activateBtn.classList.add("hidden");
+      } else {
+        if (deactivatedTitle) deactivatedTitle.textContent = "System Offline";
+        if (deactivatedSubtitle) deactivatedSubtitle.textContent = "The audio processing engine is currently disabled.";
+        if (activateBtn) activateBtn.classList.remove("hidden");
+      }
+
       if (powerToggleBtn) {
         powerToggleBtn.classList.add("deactivated");
-        powerToggleBtn.title = "Activate Volume Booster";
+        powerToggleBtn.title = state.isConflictDetected ? "Audio Stream Locked by Another Extension" : "Activate Volume Booster";
       }
 
       popupRoot.classList.forEach(cls => {
@@ -259,7 +271,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     for (let i = 0; i < STATE_KEYS.length; i++) {
       const key = STATE_KEYS[i];
       if (data[key] !== undefined) {
-        state[key] = data[key];
+        if (key === "boostLevel") {
+          const val = parseFloat(data[key]);
+          state.boostLevel = !isNaN(val) ? Math.min(Math.max(val, 1.0), 5.0) : 1.0;
+        } else {
+          state[key] = data[key];
+        }
       }
     }
     renderPopupUI();
@@ -278,9 +295,11 @@ document.addEventListener("DOMContentLoaded", async () => {
               "boostLevel", "isEnabled", "audioProfile"
             ], (result) => {
               if (result) {
-                state.boostLevel = result.boostLevel != null ? parseFloat(result.boostLevel) : 1.0;
+                const bVal = parseFloat(result.boostLevel);
+                state.boostLevel = !isNaN(bVal) ? Math.min(Math.max(bVal, 1.0), 5.0) : 1.0;
                 state.isEnabled = result.isEnabled !== undefined ? !!result.isEnabled : true;
-                state.audioProfile = result.audioProfile || "flat";
+                const validProfiles = ["flat", "cinema", "speech", "night", "bass"];
+                state.audioProfile = validProfiles.includes(result.audioProfile) ? result.audioProfile : "flat";
               }
               state.hasVideo = false;
               renderPopupUI();
@@ -307,9 +326,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   const INTERACTION_GUARD_MS = 500;
 
   function sendActionToTab(action, value, smooth = true) {
-    if (!activeTabId) return;
-
     _lastPopupAction = Date.now();
+
+    // Map and persist to local storage so settings apply globally across tabs
+    try {
+      if (action === "toggleEnable") {
+        chrome.storage.local.set({ isEnabled: !!value });
+      } else if (action === "setBoost" && typeof value === "number") {
+        chrome.storage.local.set({ boostLevel: value });
+      } else if (action === "setAudioProfile" || action === "setProfile") {
+        chrome.storage.local.set({ audioProfile: value });
+      }
+    } catch (err) {}
+
+    if (!activeTabId) return;
 
     const payload = { action, value, smooth };
 
@@ -422,9 +452,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
-  // Retry detector scan
+  // Retry detector scan ("Force Scan")
   if (retryBtn) {
     retryBtn.addEventListener("click", async () => {
+      if (activeTabId) {
+        try {
+          chrome.tabs.sendMessage(activeTabId, { action: "forceScan" }, (response) => {
+            if (chrome.runtime.lastError || !response) {
+              queryActiveTabStatus();
+            } else {
+              parseStateResponse(response);
+            }
+          });
+          return;
+        } catch (e) {}
+      }
       await queryActiveTabStatus();
     });
   }
@@ -437,6 +479,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       state.audioProfile = "flat";
 
       _lastPopupAction = Date.now();
+
+      // Persist directly to storage so reset works even without active media tab
+      try {
+        chrome.storage.local.set({
+          boostLevel: 1.0,
+          isEnabled: true,
+          audioProfile: "flat"
+        }, () => { if (chrome.runtime.lastError) {} });
+      } catch (e) {}
+
       if (activeTabId) {
         try {
           chrome.tabs.sendMessage(activeTabId, {

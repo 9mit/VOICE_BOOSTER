@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Volumify: Volume Booster & Sound Equalizer",
   "version": "1.0.4",
-  "description": "Boost volume up to 500% with Volumify sound booster and audio equalizer. Perfect for YouTube, Netflix, Prime Video, and Twitch.",
+  "description": "Boost volume up to 500% with Volumify sound booster & equalizer. Perfect for YouTube, Spotify, Netflix, Prime Video, and Twitch.",
   "minimum_chrome_version": "88",
   "browser_specific_settings": {
     "gecko": {
@@ -47,7 +47,8 @@
     "https://*.peacocktv.com/*",
     "https://*.paramountplus.com/*",
     "https://*.crunchyroll.com/*",
-    "https://*.twitch.tv/*"
+    "https://*.twitch.tv/*",
+    "https://*.spotify.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -102,7 +103,8 @@
         "https://*.peacocktv.com/*",
         "https://*.paramountplus.com/*",
         "https://*.crunchyroll.com/*",
-        "https://*.twitch.tv/*"
+        "https://*.twitch.tv/*",
+        "https://*.spotify.com/*"
       ],
       "js": [
         "platform-detector.js",

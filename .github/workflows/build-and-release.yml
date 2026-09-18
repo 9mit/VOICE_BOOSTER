@@ -3,7 +3,7 @@ name: Build and Release Chrome Extension
 on:
   push:
     tags:
-      - 'v*' # Push events matching v*, i.e. v1.0, v20.15.10
+      - 'v*' # Push events matching v*, i.e. v1.0.4
 
 jobs:
   build:
@@ -12,21 +12,29 @@ jobs:
     permissions:
       contents: write
 
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate Scripts
+        run: |
+          node -c src/*.js
+
       - name: Zip Extension
         run: |
           cd src
-          zip -r ../voice-booster-pro.zip ./*
+          zip -r ../volumify-volume-booster.zip ./*
           cd ..
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: voice-booster-pro.zip
+          files: volumify-volume-booster.zip
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false

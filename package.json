@@ -1,0 +1,18 @@
+{
+  "name": "volumify-volume-booster",
+  "version": "1.0.4",
+  "description": "Volumify: Volume Booster & Sound Equalizer Chrome Extension",
+  "scripts": {
+    "check": "node -c src/background.js && node -c src/platform-detector.js && node -c src/audio-engine.js && node -c src/spa-navigator.js && node -c src/ui-controller.js && node -c src/message-bridge.js && node -c src/content-script.js && node -c src/popup.js",
+    "build:zip": "node scripts/package-extension.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "volume-booster",
+    "sound-equalizer",
+    "manifest-v3",
+    "web-audio-api"
+  ],
+  "author": "",
+  "license": "MIT"
+}

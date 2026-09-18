@@ -44,7 +44,8 @@ const STREAMING_PATTERNS = [
   "https://*.peacocktv.com/*",
   "https://*.paramountplus.com/*",
   "https://*.crunchyroll.com/*",
-  "https://*.twitch.tv/*"
+  "https://*.twitch.tv/*",
+  "https://*.spotify.com/*"
 ];
 
 /**
