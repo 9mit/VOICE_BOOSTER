@@ -373,7 +373,9 @@
         state.isConflictDetected = audioEngine.state.isConflictDetected;
         if (messageBridge) messageBridge.syncStateToPopup();
       } else if (audioEngine && audioEngine.state.audioContext && audioEngine.state.audioContext.state !== "running") {
-        audioEngine.resumeAudioContext();
+        if (typeof audioEngine.hasUserGesture === "function" ? audioEngine.hasUserGesture(primaryVideo) : false) {
+          audioEngine.resumeAudioContext(false, primaryVideo);
+        }
       }
       return;
     }
@@ -512,8 +514,10 @@
           } else {
             audioEngine.setupAudioGraph(state.videoElement);
           }
-        } else if (audioEngine && state.videoElement && !state.videoElement.paused && audioEngine.state.audioContext && audioEngine.state.audioContext.state !== "running") {
-          audioEngine.resumeAudioContext();
+        } else if (audioEngine && state.videoElement && !state.videoElement.paused && !state.videoElement.muted && audioEngine.state.audioContext && audioEngine.state.audioContext.state !== "running") {
+          if (typeof audioEngine.hasUserGesture === "function" ? audioEngine.hasUserGesture(state.videoElement) : false) {
+            audioEngine.resumeAudioContext(false, state.videoElement);
+          }
         }
         watchdogInterval = setTimeout(runWatchdog, WATCHDOG_BASE_INTERVAL);
       } else {

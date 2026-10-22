@@ -206,8 +206,12 @@ class AudioEngine {
       }
     };
 
+    // User gesture & autoplay policy tracking
+    this._userGestureOccurred = false;
+
     // Binding helper context
     this.resumeAudioContext = this.resumeAudioContext.bind(this);
+    this.hasUserGesture = this.hasUserGesture.bind(this);
   }
 
   // ─── Zero-Latency Anti-Burst Transfer Curve ────────────────────────────────
@@ -290,16 +294,62 @@ class AudioEngine {
 
 
   /**
+   * Checks whether the current context has received user activation / gesture.
+   * Prevents Chromium from logging:
+   * "The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page."
+   * @param {HTMLMediaElement} [mediaElement] - Optional media element to check for active unmuted playback.
+   * @returns {boolean} True if safe to call AudioContext.resume().
+   */
+  hasUserGesture(mediaElement) {
+    // 1. Native User Activation API (Chrome 72+, standard across modern Chromium)
+    if (typeof navigator !== "undefined" && navigator.userActivation) {
+      if (navigator.userActivation.hasBeenActive || navigator.userActivation.isActive) {
+        return true;
+      }
+    }
+
+    // 2. Tracked user gesture events captured by listeners
+    if (this._userGestureOccurred) {
+      return true;
+    }
+
+    // 3. Persistent window flag across script updates / frames
+    if (typeof window !== "undefined" && window.__uvb_user_gesture_occurred) {
+      this._userGestureOccurred = true;
+      return true;
+    }
+
+    // 4. If media is actively playing unmuted audio, browser autoplay policy already granted sound
+    const targetMedia = mediaElement || (this.state.sourceNode && this.state.sourceNode.mediaElement);
+    if (targetMedia && !targetMedia.paused && !targetMedia.muted && targetMedia.volume > 0) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Resumes the AudioContext safely to satisfy autoplay policies.
    * Handles both 'suspended' and 'interrupted' states.
+   * Only calls ctx.resume() when user gesture is present, force is true, or media is actively playing unmuted,
+   * completely avoiding the Chromium autoplay console error.
+   * @param {boolean} [force=false] - Force resume attempt (e.g. from user gesture handler).
+   * @param {HTMLMediaElement} [mediaElement] - Associated media element.
    */
-  async resumeAudioContext() {
-    if (this.state.audioContext && this.state.audioContext.state !== "running" && this.state.audioContext.state !== "closed") {
-      try {
-        await this.state.audioContext.resume();
-      } catch (err) {
-        // Silent failure - audio context may be waiting for user gesture
-      }
+  async resumeAudioContext(force = false, mediaElement = null) {
+    if (!this.state.audioContext || this.state.audioContext.state === "running" || this.state.audioContext.state === "closed") {
+      return;
+    }
+
+    // Only attempt resume if we have user activation or force is requested
+    if (!force && !this.hasUserGesture(mediaElement)) {
+      return;
+    }
+
+    try {
+      await this.state.audioContext.resume();
+    } catch (err) {
+      // AudioContext resume rejected (e.g. gesture expired or tab backgrounded)
     }
   }
 
@@ -316,18 +366,24 @@ class AudioEngine {
     
     ctx.onstatechange = () => {
       if (ctx.state !== "running" && ctx.state !== "closed") {
-        ctx.resume().catch(() => {});
+        if (this.hasUserGesture()) {
+          this.resumeAudioContext();
+        }
       }
     };
 
     if (!this._boundUserGestureResume) {
       this._boundUserGestureResume = () => {
+        this._userGestureOccurred = true;
+        if (typeof window !== "undefined") {
+          window.__uvb_user_gesture_occurred = true;
+        }
         if (this.state.audioContext && this.state.audioContext.state !== "running" && this.state.audioContext.state !== "closed") {
-          this.resumeAudioContext();
+          this.resumeAudioContext(true);
         }
       };
       if (typeof window !== "undefined") {
-        const events = ["click", "pointerdown", "mousedown", "keydown", "touchstart"];
+        const events = ["click", "pointerdown", "mousedown", "keydown", "touchstart", "touchend"];
         events.forEach((evt) => {
           window.addEventListener(evt, this._boundUserGestureResume, { capture: true, passive: true });
           if (typeof document !== "undefined") {
@@ -695,18 +751,24 @@ class AudioEngine {
       if (videoSource) {
         if (!this._mediaResumeHandler) {
           this._mediaResumeHandler = () => {
-            if (this.state.audioContext && this.state.audioContext.state !== "running" && this.state.audioContext.state !== "closed") {
-              this.resumeAudioContext();
+            if (!video.paused && !video.muted && video.volume > 0) {
+              this.resumeAudioContext(true, video);
+            } else if (this.hasUserGesture(video)) {
+              this.resumeAudioContext(false, video);
             }
           };
         }
-        ["play", "playing", "volumechange", "timeupdate"].forEach((evt) => {
+        ["play", "playing", "volumechange"].forEach((evt) => {
           video.removeEventListener(evt, this._mediaResumeHandler);
           video.addEventListener(evt, this._mediaResumeHandler, { passive: true });
         });
 
-        // Attempt immediate resume in case video is already playing or user has interacted
-        this.resumeAudioContext();
+        // Only attempt immediate resume if video is actively playing unmuted or user has interacted
+        if (!video.paused && !video.muted && video.volume > 0) {
+          this.resumeAudioContext(true, video);
+        } else if (this.hasUserGesture(video)) {
+          this.resumeAudioContext(false, video);
+        }
       }
 
     } catch (err) {

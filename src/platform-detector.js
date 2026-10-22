@@ -328,31 +328,31 @@ class PlatformDetector {
     if (hostname.includes("bilibili.tv") || hostname.includes("bilibili.com")) {
       return configs.bilibili;
     }
-    if (hostname.includes("hianime.")) {
+    if (hostname.includes("hianime") || hostname.includes("hianimes")) {
       return configs.hianime;
     }
-    if (hostname.includes("aniwatch") || hostname.includes("zoro.")) {
+    if (hostname.includes("aniwatch") || hostname.includes("zoro")) {
       return configs.aniwatch;
     }
-    if (hostname.includes("animepahe.")) {
+    if (hostname.includes("animepahe") || hostname.includes("pahe.")) {
       return configs.animepahe;
     }
-    if (hostname.includes("aniwave.") || hostname.includes("9anime.")) {
+    if (hostname.includes("aniwave") || hostname.includes("9anime")) {
       return configs.aniwave;
     }
-    if (hostname.includes("gogoanime") || hostname.includes("anitaku.")) {
+    if (hostname.includes("gogoanime") || hostname.includes("anitaku")) {
       return configs.gogoanime;
     }
     if (hostname.includes("kickassanime") || hostname.includes("kaas.am")) {
       return configs.kickassanime;
     }
-    if (hostname.includes("animeflv.")) {
+    if (hostname.includes("animeflv")) {
       return configs.animeflv;
     }
-    if (hostname.includes("retrocrush.tv")) {
+    if (hostname.includes("retrocrush")) {
       return configs.retrocrush;
     }
-    if (hostname.includes("megacloud.tv") || hostname.includes("rapid-cloud.")) {
+    if (hostname.includes("megacloud") || hostname.includes("rapid-cloud") || hostname.includes("rapidcloud")) {
       return configs.hianime;
     }
     if (hostname.includes("twitch.tv")) {

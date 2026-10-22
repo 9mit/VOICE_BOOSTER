@@ -1,6 +1,6 @@
 # Volumify: Volume Booster & Sound Equalizer
 
-[![Version](https://img.shields.io/badge/version-1.0.7-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.8-blue.svg)](package.json)
 [![Manifest V3](https://img.shields.io/badge/manifest-v3-success.svg)](src/manifest.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](package.json)
 [![Chrome 116+](https://img.shields.io/badge/Chrome-116%2B-green.svg)](src/manifest.json)
@@ -83,9 +83,9 @@ Full multi-frame iframe injection (`all_frames: true`) ensures embedded players 
 
 ## 📦 Distribution ZIP & Installation
 
-### Option 1: Install from Pre-Built ZIP (`v1.0.7`)
+### Option 1: Install from Pre-Built ZIP (`v1.0.8`)
 The root directory includes the latest pre-packaged, production-ready extension package:
-📁 **[`volumify-volume-booster.zip`](./volumify-volume-booster.zip)** (Version 1.0.7)
+📁 **[`volumify-volume-booster.zip`](./volumify-volume-booster.zip)** (Version 1.0.8)
 
 1. Download or clone this repository to obtain **`volumify-volume-booster.zip`**.
 2. Extract `volumify-volume-booster.zip` into a local directory of your choice.
@@ -136,7 +136,10 @@ Shortcuts can be customized at any time by navigating to `chrome://extensions/sh
 
 ## 📝 Version History
 
-* **v1.0.7 (Current)**:
+* **v1.0.8 (Current)**:
+  * Resolved Chromium Web Audio autoplay policy restriction (`AudioContext was not allowed to start`) by implementing intelligent `hasUserGesture` guards and capture-phase user interaction listeners.
+  * Enhanced anime streaming detection to support mirror domains (e.g. `hianimes.se`, `zoro`, `rapidcloud`).
+* **v1.0.7**:
   * Packaged updated manifest version for Chrome Web Store distribution.
   * Cleaned up redundant development and testing artifacts.
 * **v1.0.6**:
