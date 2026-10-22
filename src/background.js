@@ -9,32 +9,6 @@
  * - Maintains a keep-alive alarm to prevent the service worker from dying.
  */
 
-// ─── Constants ──────────────────────────────────────────────────────────────────
-
-/**
- * URL match patterns for all supported streaming platforms.
- * Used for both tab queries and scripting injection targets.
- */
-const STREAMING_PATTERNS = [
-  "https://*/*",
-  "http://*/*"
-];
-
-/**
- * Content scripts to inject, in correct dependency order.
- * Must match the order in manifest.json content_scripts.js array.
- */
-const CONTENT_SCRIPTS = [
-  "platform-detector.js",
-  "audio-engine.js",
-  "spa-navigator.js",
-  "ui-controller.js",
-  "message-bridge.js",
-  "content-script.js"
-];
-
-const CONTENT_CSS = ["content.css"];
-
 // ─── Installation & Auto-Injection ──────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -85,10 +59,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 /**
- * Programmatically injects content scripts + CSS into every open tab
- * that matches our streaming URL patterns. This is the key fix for the
- * "OFFLINE after reload" bug — Chrome's declarative content_scripts only
- * run on NEW navigations, not on tabs that were already open.
+ * Notifies already-open tabs to re-initialize after extension install/update.
+ * With activeTab permission, we cannot programmatically inject scripts into
+ * arbitrary tabs. Instead, declarative content_scripts handle injection on
+ * page load. For already-open tabs, we send a ping to check if the content
+ * script is already loaded (from the declarative injection) and notify it
+ * to re-sync settings. Tabs without content scripts will get them on the
+ * next navigation.
  */
 let _injectionPromise = null;
 
@@ -101,18 +78,16 @@ async function injectIntoExistingTabs() {
 
   _injectionPromise = (async () => {
     try {
-      // Single query for all patterns
-      const tabs = await chrome.tabs.query({ url: STREAMING_PATTERNS });
+      // Query all tabs (no URL filter needed — sendMessage is safe to call on any tab)
+      const tabs = await chrome.tabs.query({});
       if (!tabs || tabs.length === 0) return;
 
-      // Fire all tab injections in parallel
-      const injectionPromises = [];
+      const notifyPromises = [];
       for (const tab of tabs) {
-        // Skip chrome:// internal pages, PDF viewer, etc.
-        if (!tab.id || !tab.url || tab.url.startsWith("chrome://")) continue;
-        injectionPromises.push(injectIntoTab(tab.id));
+        if (!tab.id) continue;
+        notifyPromises.push(notifyTab(tab.id));
       }
-      await Promise.allSettled(injectionPromises);
+      await Promise.allSettled(notifyPromises);
     } catch (err) {
       // Tab query failed — this is fine
     }
@@ -126,67 +101,39 @@ async function injectIntoExistingTabs() {
 }
 
 /**
- * Injects content scripts into a single tab. Guards against double-injection
- * by first checking if the content script is already running via an async ping
- * with a timeout. If content script responds, we skip injection entirely.
+ * Pings a tab to check if the content script is loaded and notifies it
+ * to re-sync settings. If no content script is present, the message is
+ * silently dropped (the tab will get content scripts on next navigation
+ * via the declarative content_scripts in manifest.json).
  */
-async function injectIntoTab(tabId) {
-  // Ping with a short timeout to detect if content scripts are already running.
-  // The declarative content_scripts may still be loading, so we wait briefly.
-  const alreadyRunning = await new Promise((resolve) => {
+async function notifyTab(tabId) {
+  return new Promise((resolve) => {
     let settled = false;
     const timeoutId = setTimeout(() => {
-      if (!settled) { settled = true; resolve(false); }
-    }, 300);
+      if (!settled) { settled = true; resolve(); }
+    }, 500);
 
     try {
       const p = chrome.tabs.sendMessage(tabId, { action: "ping" }, (response) => {
+        if (chrome.runtime.lastError) { /* Tab has no content script — expected */ }
         if (settled) return;
         settled = true;
         clearTimeout(timeoutId);
-        if (chrome.runtime.lastError || !response) {
-          resolve(false); // Not loaded
-        } else {
-          resolve(true); // Already running
-        }
+        resolve();
       });
       if (p && typeof p.catch === "function") {
         p.catch(() => {
           if (!settled) {
             settled = true;
             clearTimeout(timeoutId);
-            resolve(false);
+            resolve();
           }
         });
       }
     } catch (e) {
-      if (!settled) { settled = true; clearTimeout(timeoutId); resolve(false); }
+      if (!settled) { settled = true; clearTimeout(timeoutId); resolve(); }
     }
   });
-
-  if (alreadyRunning) {
-    return;
-  }
-
-  try {
-    // Inject CSS first
-    await chrome.scripting.insertCSS({
-      target: { tabId: tabId, allFrames: true },
-      files: CONTENT_CSS
-    });
-  } catch (e) {
-    // CSS injection failure is non-fatal
-  }
-
-  try {
-    // Inject JS files in order
-    await chrome.scripting.executeScript({
-      target: { tabId: tabId, allFrames: true },
-      files: CONTENT_SCRIPTS
-    });
-  } catch (err) {
-    // Injection failed - continue with next tab
-  }
 }
 
 // ─── Global Toggle (Keyboard Shortcut) ──────────────────────────────────────────
@@ -199,6 +146,9 @@ chrome.commands.onCommand.addListener((command) => {
 
 /**
  * Toggles the volume booster on/off across ALL active streaming tabs.
+ * Uses chrome.tabs.query({}) without URL filter — sendMessage does not
+ * require host permissions, and tabs without our content script will
+ * silently ignore the message.
  */
 function toggleBoosterGlobal() {
   chrome.storage.local.get(["isEnabled"], (result) => {
@@ -209,13 +159,13 @@ function toggleBoosterGlobal() {
     chrome.storage.local.set({ isEnabled: next }, () => {
       if (chrome.runtime.lastError) return;
       updateOffscreenSettings(null, { isEnabled: next });
-      chrome.tabs.query({ url: STREAMING_PATTERNS }, (tabs) => {
+      chrome.tabs.query({}, (tabs) => {
         if (chrome.runtime.lastError || !tabs) return;
         tabs.forEach((tab) => {
           if (!tab.id) return;
           try {
             const p = chrome.tabs.sendMessage(tab.id, { action: "toggleEnable", value: next }, () => {
-              if (chrome.runtime.lastError) { /* tab doesn't have content script */ }
+              void chrome.runtime.lastError; // Consume error for tabs without content script
             });
             if (p && typeof p.catch === "function") {
               p.catch(() => {});
