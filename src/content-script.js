@@ -47,6 +47,14 @@
   let _storagePendingData = null;
   let _storageWriteScheduled = false;
 
+  const TAB_CAPTURE_PLATFORMS = [
+    "netflix", "primevideo", "disneyplus", "jiohotstar", "spotify",
+    "twitch", "sonyliv", "zee5", "hulu", "max", "appletv",
+    "peacock", "paramount", "crunchyroll", "funimation", "hidive",
+    "bilibili", "hianime", "aniwatch", "animepahe", "aniwave",
+    "gogoanime", "animeflv", "kickassanime", "retrocrush"
+  ];
+
   /**
    * Safe wrapper for chrome.storage.local.set that aggregates writes
    * and limits them to at most once per 250ms to prevent quota exhaustion.
@@ -134,6 +142,16 @@
       // 1. Detect platform
       platformConfig = window.PlatformDetector.getDetectedPlatform();
 
+      // Guard against iframe collisions on sites where the media player is strictly top-frame
+      const TOP_FRAME_ONLY = [
+        "youtube", "netflix", "primevideo", "twitch", "spotify",
+        "jiohotstar", "disneyplus", "sonyliv", "zee5", "hulu",
+        "max", "appletv", "peacock", "paramount"
+      ];
+      if (window !== window.top && TOP_FRAME_ONLY.includes(platformConfig.id)) {
+        return;
+      }
+
       // 2. Instantiate or inherit AudioEngine to preserve graph across extension reloads
       if (window.__uvb_audioEngine) {
         audioEngine = window.__uvb_audioEngine;
@@ -216,6 +234,7 @@
             state.boostLevel = clamped;
             if (audioEngine) {
               audioEngine.state.boostLevel = clamped;
+              audioEngine.resumeAudioContext();
               audioEngine.applyAudioEngineSettings();
             }
             stateChanged = true;
@@ -229,6 +248,7 @@
           state.isEnabled = en;
           if (audioEngine) {
             audioEngine.state.isEnabled = en;
+            audioEngine.resumeAudioContext();
             if (typeof audioEngine.setBypassMode === "function") {
               audioEngine.setBypassMode(!en);
             } else {
@@ -246,6 +266,7 @@
           state.audioProfile = prof;
           if (audioEngine) {
             audioEngine.state.audioProfile = prof;
+            audioEngine.resumeAudioContext();
             audioEngine.applyAudioEngineSettings();
           }
           stateChanged = true;
@@ -300,6 +321,7 @@
     }
     scanForVideoInternal(0);
   }
+  window.__uvb_scanForVideo = scanForVideo;
 
   function scanForVideoInternal(attempt) {
     var videoSelector = platformConfig.videoSelector || "video";
@@ -327,7 +349,7 @@
 
     var isAudioElement = primaryVideo.tagName === "AUDIO";
     var rect = primaryVideo.getBoundingClientRect();
-    if (!isAudioElement && rect.width === 0 && rect.height === 0) {
+    if (!isAudioElement && rect.width === 0 && rect.height === 0 && primaryVideo.paused) {
       if (attempt < 10) {
         var delay = Math.min(500 * (attempt + 1), 3000);
         videoScanRetryTimer = setTimeout(function() {
@@ -337,12 +359,25 @@
       return;
     }
 
+    if (platformConfig && TAB_CAPTURE_PLATFORMS.includes(platformConfig.id)) {
+      state.videoElement = primaryVideo;
+      watchdogMissCount = 0;
+      state.isConflictDetected = false;
+      if (messageBridge) messageBridge.syncStateToPopup();
+      return;
+    }
+
     if (state.videoElement === primaryVideo) {
+      if (audioEngine && (!audioEngine.state.graphConnected || !audioEngine.state.sourceNode)) {
+        audioEngine.setupAudioGraph(primaryVideo);
+        state.isConflictDetected = audioEngine.state.isConflictDetected;
+        if (messageBridge) messageBridge.syncStateToPopup();
+      } else if (audioEngine && audioEngine.state.audioContext && audioEngine.state.audioContext.state !== "running") {
+        audioEngine.resumeAudioContext();
+      }
       return;
     }
     state.videoElement = primaryVideo;
-
-    if (videoMutationObserver) videoMutationObserver.disconnect();
 
     watchdogMissCount = 0;
 
@@ -377,16 +412,30 @@
     }
 
     var best = null;
-    var bestArea = 0;
+    var bestScore = -1;
+
     candidates.forEach(function(candidate) {
-      if (!candidate.paused || candidate.readyState >= 2) {
-        best = candidate;
-        return;
-      }
+      if (!candidate) return;
+      var isAudio = candidate.tagName === "AUDIO";
       var r = candidate.getBoundingClientRect();
       var area = r.width * r.height;
-      if (area > bestArea) {
-        bestArea = area;
+      var isPlaying = !candidate.paused && !candidate.ended;
+      var isLoaded = candidate.readyState >= 2;
+
+      // Skip 0-area elements that are not audio and not playing
+      if (!isAudio && area === 0 && !isPlaying) {
+        return;
+      }
+
+      var score = area;
+      if (isPlaying) score += 1000000;
+      if (candidate.currentTime > 0) score += 200000;
+      if (isLoaded) score += 10000;
+      if (isAudio) score += 50000;
+      if (candidate.classList && candidate.classList.contains("html5-main-video")) score += 500000;
+
+      if (score > bestScore) {
+        bestScore = score;
         best = candidate;
       }
     });
@@ -455,9 +504,16 @@
           startVideoMutationObserver();
           scanForVideo();
         } else if (audioEngine && typeof audioEngine.validateGraphIntegrity === "function" && !audioEngine.validateGraphIntegrity()) {
-          // Audio graph is broken — attempt recovery by re-scanning
-          state.videoElement = null;
-          scanForVideo();
+          // Audio graph is broken — attempt recovery (skip on tab capture platforms where audio is processed offscreen)
+          if (platformConfig && TAB_CAPTURE_PLATFORMS.includes(platformConfig.id)) {
+            // Handled via tab capture in offscreen document — DO NOT disconnect DOM audio!
+          } else if (typeof audioEngine.recoverAudioGraph === "function") {
+            audioEngine.recoverAudioGraph(state.videoElement);
+          } else {
+            audioEngine.setupAudioGraph(state.videoElement);
+          }
+        } else if (audioEngine && state.videoElement && !state.videoElement.paused && audioEngine.state.audioContext && audioEngine.state.audioContext.state !== "running") {
+          audioEngine.resumeAudioContext();
         }
         watchdogInterval = setTimeout(runWatchdog, WATCHDOG_BASE_INTERVAL);
       } else {
@@ -515,7 +571,8 @@
     safeStorageSet({ boostLevel: clampedVal });
 
     audioEngine.state.boostLevel = clampedVal;
-    // Direct apply — no throttle. Every boost change must be heard immediately.
+    // Ensure AudioContext is active and apply immediately
+    audioEngine.resumeAudioContext();
     audioEngine.applyAudioEngineSettings();
 
     if (!smooth && state.isEnabled && uiController) {
@@ -531,6 +588,7 @@
 
     if (!audioEngine) return;
     audioEngine.state.isEnabled = enabled;
+    audioEngine.resumeAudioContext();
     
     // Use instant bypass mode for click-free, near-instantaneous on/off toggle
     if (typeof audioEngine.setBypassMode === 'function') {
@@ -550,6 +608,7 @@
 
     if (!audioEngine) return;
     audioEngine.state.audioProfile = profile;
+    audioEngine.resumeAudioContext();
     audioEngine.applyAudioEngineSettings();
     if (messageBridge) messageBridge.syncStateToPopup();
   }

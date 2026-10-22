@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Volumify: Volume Booster & Sound Equalizer",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "Boost volume up to 500% with Volumify sound booster & equalizer. Perfect for YouTube, Spotify, Netflix, Prime Video, and Twitch.",
-  "minimum_chrome_version": "88",
+  "minimum_chrome_version": "116",
   "browser_specific_settings": {
     "gecko": {
       "id": "universal-volume-booster@extensions",
@@ -13,42 +13,15 @@
   "permissions": [
     "storage",
     "alarms",
-    "scripting"
+    "scripting",
+    "tabCapture",
+    "offscreen"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; default-src 'none';"
   },
   "host_permissions": [
-    "https://*.youtube.com/*",
-    "https://*.youtube-nocookie.com/*",
-    "https://*.netflix.com/*",
-    "https://*.jiocinema.com/*",
-    "https://*.jiohotstar.com/*",
-    "https://*.disneyplus.com/*",
-    "https://*.hotstar.com/*",
-    "https://*.primevideo.com/*",
-    "https://*.amazon.com/gp/video/*",
-    "https://*.amazon.com/*/video/*",
-    "https://*.amazon.co.uk/gp/video/*",
-    "https://*.amazon.co.uk/*/video/*",
-    "https://*.amazon.de/gp/video/*",
-    "https://*.amazon.de/*/video/*",
-    "https://*.amazon.co.jp/gp/video/*",
-    "https://*.amazon.co.jp/*/video/*",
-    "https://*.amazon.in/gp/video/*",
-    "https://*.amazon.in/*/video/*",
-    "https://*.sonyliv.com/*",
-    "https://*.zee5.com/*",
-    "https://*.hulu.com/*",
-    "https://*.max.com/*",
-    "https://*.hbomax.com/*",
-    "https://tv.apple.com/*",
-    "https://*.tv.apple.com/*",
-    "https://*.peacocktv.com/*",
-    "https://*.paramountplus.com/*",
-    "https://*.crunchyroll.com/*",
-    "https://*.twitch.tv/*",
-    "https://*.spotify.com/*"
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -75,36 +48,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.youtube.com/*",
-        "https://*.youtube-nocookie.com/*",
-        "https://*.netflix.com/*",
-        "https://*.jiocinema.com/*",
-        "https://*.jiohotstar.com/*",
-        "https://*.disneyplus.com/*",
-        "https://*.hotstar.com/*",
-        "https://*.primevideo.com/*",
-        "https://*.amazon.com/gp/video/*",
-        "https://*.amazon.com/*/video/*",
-        "https://*.amazon.co.uk/gp/video/*",
-        "https://*.amazon.co.uk/*/video/*",
-        "https://*.amazon.de/gp/video/*",
-        "https://*.amazon.de/*/video/*",
-        "https://*.amazon.co.jp/gp/video/*",
-        "https://*.amazon.co.jp/*/video/*",
-        "https://*.amazon.in/gp/video/*",
-        "https://*.amazon.in/*/video/*",
-        "https://*.sonyliv.com/*",
-        "https://*.zee5.com/*",
-        "https://*.hulu.com/*",
-        "https://*.max.com/*",
-        "https://*.hbomax.com/*",
-        "https://tv.apple.com/*",
-        "https://*.tv.apple.com/*",
-        "https://*.peacocktv.com/*",
-        "https://*.paramountplus.com/*",
-        "https://*.crunchyroll.com/*",
-        "https://*.twitch.tv/*",
-        "https://*.spotify.com/*"
+        "<all_urls>"
       ],
       "js": [
         "platform-detector.js",
@@ -118,7 +62,7 @@
         "content.css"
       ],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
   ],
   "icons": {

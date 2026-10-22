@@ -5,6 +5,7 @@
  * and the extension's toolbar Popup interface.
  * Implements bi-directional synchronization to ensure both interfaces reflect 
  * the exact same booster states at all times.
+ * Supports multi-frame tab environments (iframe embedded anime/media players).
  */
 
 class MessageBridge {
@@ -52,18 +53,42 @@ class MessageBridge {
         switch (message.action) {
           case "ping":
             sendResponse({ status: "alive" });
-            break;
+            return true;
 
-          case "getStatus":
+          case "getStatus": {
+            if (this.state.videoElement && document.contains(this.state.videoElement)) {
+              sendResponse(this.getSerializedStatus());
+              return true;
+            }
+            if (window !== window.top) {
+              return false;
+            }
             sendResponse(this.getSerializedStatus());
-            break;
+            return true;
+          }
 
-          case "forceScan":
+          case "forceScan": {
             if (typeof this.callbacks.scanForVideo === "function") {
               this.callbacks.scanForVideo();
             }
+            if (this.state.videoElement && document.contains(this.state.videoElement)) {
+              sendResponse(this.getSerializedStatus());
+              return true;
+            }
+            if (window !== window.top) {
+              return false;
+            }
+            if (document.querySelector("iframe")) {
+              setTimeout(() => {
+                try {
+                  sendResponse(this.getSerializedStatus());
+                } catch (e) {}
+              }, 70);
+              return true;
+            }
             sendResponse(this.getSerializedStatus());
-            break;
+            return true;
+          }
 
           case "setBoost":
             if (typeof message.value === "number") {
@@ -74,7 +99,7 @@ class MessageBridge {
             } else {
               sendResponse({ success: false, error: "Invalid gain level." });
             }
-            break;
+            return true;
 
           case "toggleEnable":
             if (message.value !== undefined) {
@@ -83,7 +108,7 @@ class MessageBridge {
             } else {
               sendResponse({ success: false });
             }
-            break;
+            return true;
 
           case "setAudioProfile":
             if (message.value) {
@@ -97,7 +122,7 @@ class MessageBridge {
             } else {
               sendResponse({ success: false });
             }
-            break;
+            return true;
 
           case "resetAll": {
             if (message.value && typeof message.value === "object") {
@@ -109,11 +134,11 @@ class MessageBridge {
             } else {
               sendResponse({ success: false, error: "Invalid reset payload" });
             }
-            break;
+            return true;
           }
 
           default:
-            break;
+            return false;
         }
         
         return true;
@@ -139,8 +164,8 @@ class MessageBridge {
       boostLevel: this.state.boostLevel,
       isEnabled: this.state.isEnabled,
       audioProfile: this.state.audioProfile,
-      isConflictDetected: this.state.isConflictDetected,
-      hasVideo: !!this.state.videoElement,
+      isConflictDetected: !!this.state.isConflictDetected,
+      hasVideo: !!(this.state.videoElement && document.contains(this.state.videoElement)),
       platformId: this.callbacks.getPlatformId(),
       platformName: this.callbacks.getPlatformName()
     };
@@ -152,13 +177,16 @@ class MessageBridge {
   syncStateToPopup() {
     if (!this._isValidContext()) return;
     try {
-      chrome.runtime.sendMessage({
+      const p = chrome.runtime.sendMessage({
         action: "statusUpdate",
         status: this.getSerializedStatus()
       }, () => {
         // Suppress expected errors if the popup is closed
         if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.lastError) { /* expected */ }
       });
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {});
+      }
     } catch (err) {
       // context invalidated or other runtime issues
     }

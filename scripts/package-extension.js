@@ -33,6 +33,8 @@ const requiredFiles = [
   "ui-controller.js",
   "message-bridge.js",
   "content-script.js",
+  "offscreen.html",
+  "offscreen.js",
   "popup.html",
   "popup.js",
   "popup.css",

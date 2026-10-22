@@ -7,6 +7,16 @@
  */
 
 let activeTabId = null;
+let activeFrameId = 0;
+let isCapturedTab = false;
+
+const TAB_CAPTURE_PLATFORMS = new Set([
+  "netflix", "primevideo", "disneyplus", "jiohotstar", "spotify",
+  "twitch", "sonyliv", "zee5", "hulu", "max", "appletv",
+  "peacock", "paramount", "crunchyroll", "funimation", "hidive",
+  "bilibili", "hianime", "aniwatch", "animepahe", "aniwave",
+  "gogoanime", "animeflv", "kickassanime", "retrocrush"
+]);
 
 const state = {
   boostLevel: 1.0,
@@ -67,26 +77,20 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    const isEn = state.isEnabled && !state.isConflictDetected;
+    const isEn = state.isEnabled;
 
     if (!isEn) {
       activeVideoContainer.classList.add("hidden");
       noVideoContainer.classList.add("hidden");
       deactivatedContainer.classList.remove("hidden");
 
-      if (state.isConflictDetected) {
-        if (deactivatedTitle) deactivatedTitle.textContent = "Stream Intercepted";
-        if (deactivatedSubtitle) deactivatedSubtitle.textContent = "Another extension has already intercepted this video's audio stream. Disable competing volume or equalizer extensions and refresh the page.";
-        if (activateBtn) activateBtn.classList.add("hidden");
-      } else {
-        if (deactivatedTitle) deactivatedTitle.textContent = "System Offline";
-        if (deactivatedSubtitle) deactivatedSubtitle.textContent = "The audio processing engine is currently disabled.";
-        if (activateBtn) activateBtn.classList.remove("hidden");
-      }
+      if (deactivatedTitle) deactivatedTitle.textContent = "System Offline";
+      if (deactivatedSubtitle) deactivatedSubtitle.textContent = "The audio processing engine is currently disabled.";
+      if (activateBtn) activateBtn.classList.remove("hidden");
 
       if (powerToggleBtn) {
         powerToggleBtn.classList.add("deactivated");
-        powerToggleBtn.title = state.isConflictDetected ? "Audio Stream Locked by Another Extension" : "Activate Volume Booster";
+        powerToggleBtn.title = "Activate Volume Booster";
       }
 
       popupRoot.classList.forEach(cls => {
@@ -100,18 +104,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       if (statusBadge) {
-        if (state.isConflictDetected) {
-          statusBadge.textContent = "LOCKED";
-          statusBadge.className = "status-indicator deactivated";
-        } else {
-          statusBadge.textContent = "BYPASS";
-          statusBadge.className = "status-indicator";
-        }
+        statusBadge.textContent = "BYPASS";
+        statusBadge.className = "status-indicator";
       }
 
       if (conflictWarning) {
-        if (state.isConflictDetected) conflictWarning.classList.remove("hidden");
-        else conflictWarning.classList.add("hidden");
+        conflictWarning.classList.add("hidden");
       }
       return;
     }
@@ -172,11 +170,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // 6. Update Status indicator badge
     if (statusBadge) {
-      if (state.isConflictDetected) {
-        statusBadge.textContent = "LOCKED";
-        statusBadge.className = "status-indicator deactivated";
-      } else if (state.isEnabled) {
-        statusBadge.textContent = state.platformName.toUpperCase();
+      if (state.isEnabled) {
+        statusBadge.textContent = (state.platformName || "ACTIVE").toUpperCase();
         statusBadge.className = "status-indicator active";
       } else {
         statusBadge.textContent = "BYPASS";
@@ -224,7 +219,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     } else {
       if (dialLabelText) {
-        dialLabelText.textContent = state.isConflictDetected ? "Blocked" : "Disabled";
+        dialLabelText.textContent = "Disabled";
         dialLabelText.className = "dial-label disabled";
       }
       if (volumeWarning) volumeWarning.classList.add("hidden");
@@ -289,25 +284,117 @@ document.addEventListener("DOMContentLoaded", async () => {
         const activeTab = tabs[0];
         activeTabId = activeTab.id;
 
-        chrome.tabs.sendMessage(activeTabId, { action: "getStatus" }, (response) => {
-          if (chrome.runtime.lastError || !response) {
-            chrome.storage.local.get([
-              "boostLevel", "isEnabled", "audioProfile"
-            ], (result) => {
-              if (result) {
-                const bVal = parseFloat(result.boostLevel);
-                state.boostLevel = !isNaN(bVal) ? Math.min(Math.max(bVal, 1.0), 5.0) : 1.0;
-                state.isEnabled = result.isEnabled !== undefined ? !!result.isEnabled : true;
-                const validProfiles = ["flat", "cinema", "speech", "night", "bass"];
-                state.audioProfile = validProfiles.includes(result.audioProfile) ? result.audioProfile : "flat";
+        // Auto-detect platform from active tab URL immediately
+        const detectedPlatform = (typeof window.PlatformDetector !== "undefined" && activeTab.url)
+          ? window.PlatformDetector.getDetectedPlatform(activeTab.url)
+          : { id: "generic", name: "Generic Site" };
+
+        const isRecognizedPlatform = detectedPlatform.id !== "generic";
+        const isAudible = !!activeTab.audible;
+
+        if (isRecognizedPlatform) {
+          state.platformId = detectedPlatform.id;
+          state.platformName = detectedPlatform.name;
+          state.hasVideo = true;
+        }
+
+        // Check if background service worker recorded an active media subframe or capture session
+        if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+          try {
+            const p = chrome.runtime.sendMessage({ action: "getTabMediaStatus", tabId: activeTabId }, (bgStatus) => {
+              if (!chrome.runtime.lastError && bgStatus) {
+                if (bgStatus.isCaptured) {
+                  if (state.platformId === "youtube") {
+                    try {
+                      chrome.runtime.sendMessage({ action: "stopTabCapture", tabId: activeTabId }, () => {
+                        if (chrome.runtime.lastError) {}
+                      });
+                    } catch (e) {}
+                    isCapturedTab = false;
+                  } else {
+                    isCapturedTab = true;
+                    state.hasVideo = true;
+                  }
+                }
+                if (bgStatus.hasVideo) {
+                  if (bgStatus.frameId !== undefined) activeFrameId = bgStatus.frameId;
+                  parseStateResponse(bgStatus);
+                }
               }
-              state.hasVideo = false;
-              renderPopupUI();
             });
+            if (p && typeof p.catch === "function") {
+              p.catch(() => {});
+            }
+          } catch (e) {}
+        }
+
+        // Read stored user booster preferences
+        chrome.storage.local.get([
+          "boostLevel", "isEnabled", "audioProfile"
+        ], (result) => {
+          if (result) {
+            const bVal = parseFloat(result.boostLevel);
+            state.boostLevel = !isNaN(bVal) ? Math.min(Math.max(bVal, 1.0), 5.0) : 1.0;
+            state.isEnabled = result.isEnabled !== undefined ? !!result.isEnabled : true;
+            const validProfiles = ["flat", "cinema", "speech", "night", "bass"];
+            state.audioProfile = validProfiles.includes(result.audioProfile) ? result.audioProfile : "flat";
+          }
+
+          if (isRecognizedPlatform || isAudible || isCapturedTab || state.hasVideo) {
+            state.hasVideo = true;
+            renderPopupUI();
+
+            // If on a designated capture platform (never YouTube) and booster is active with gain > 1.0, engage tab capture
+            if (TAB_CAPTURE_PLATFORMS.has(state.platformId) && state.platformId !== "youtube" && state.isEnabled && state.boostLevel > 1.0) {
+              try {
+                const p = chrome.runtime.sendMessage({
+                  action: "startTabCapture",
+                  tabId: activeTabId,
+                  settings: {
+                    boostLevel: state.boostLevel,
+                    isEnabled: state.isEnabled,
+                    audioProfile: state.audioProfile
+                  }
+                }, (res) => {
+                  if (!chrome.runtime.lastError && res && res.success) {
+                    isCapturedTab = true;
+                  }
+                });
+                if (p && typeof p.catch === "function") {
+                  p.catch(() => {});
+                }
+              } catch (e) {}
+            } else if (state.platformId === "youtube" && isCapturedTab) {
+              try {
+                chrome.runtime.sendMessage({ action: "stopTabCapture", tabId: activeTabId }, () => {
+                  if (chrome.runtime.lastError) {}
+                });
+              } catch (e) {}
+              isCapturedTab = false;
+            }
           } else {
-            parseStateResponse(response);
+            showNoVideoState();
           }
         });
+
+        // Query content script (if loaded on tab)
+        try {
+          const p = chrome.tabs.sendMessage(activeTabId, { action: "getStatus" }, (response) => {
+            if (!chrome.runtime.lastError && response && response.hasVideo) {
+              activeFrameId = 0;
+              parseStateResponse(response);
+            } else if (!isRecognizedPlatform && !isAudible && !isCapturedTab && !state.hasVideo) {
+              showNoVideoState();
+            }
+          });
+          if (p && typeof p.catch === "function") {
+            p.catch(() => {});
+          }
+        } catch (e) {
+          if (!isRecognizedPlatform && !isAudible && !isCapturedTab && !state.hasVideo) {
+            showNoVideoState();
+          }
+        }
       } else {
         showNoVideoState();
       }
@@ -348,27 +435,95 @@ document.addEventListener("DOMContentLoaded", async () => {
       payload.action = "setAudioProfile";
     }
 
+    // Coordinate with tabCapture offscreen audio engine for DRM, Twitch, and anime iframe players (NEVER YouTube)
+    const isTabCapturePlatform = TAB_CAPTURE_PLATFORMS.has(state.platformId) && state.platformId !== "youtube";
+    if (isTabCapturePlatform && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        if (state.isEnabled && (state.boostLevel > 1.0 || state.audioProfile !== "flat")) {
+          const p = chrome.runtime.sendMessage({
+            action: "startTabCapture",
+            tabId: activeTabId,
+            settings: {
+              boostLevel: state.boostLevel,
+              isEnabled: state.isEnabled,
+              audioProfile: state.audioProfile
+            }
+          }, (res) => {
+            if (!chrome.runtime.lastError && res && res.success) {
+              isCapturedTab = true;
+            }
+          });
+          if (p && typeof p.catch === "function") {
+            p.catch(() => {});
+          }
+        } else {
+          const p = chrome.runtime.sendMessage({
+            action: "updateTabAudioSettings",
+            tabId: activeTabId,
+            settings: {
+              boostLevel: state.boostLevel,
+              isEnabled: state.isEnabled,
+              audioProfile: state.audioProfile
+            }
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+          if (p && typeof p.catch === "function") {
+            p.catch(() => {});
+          }
+        }
+      } catch (e) {}
+    } else if (state.platformId === "youtube" && isCapturedTab) {
+      try {
+        chrome.runtime.sendMessage({ action: "stopTabCapture", tabId: activeTabId }, () => {
+          if (chrome.runtime.lastError) {}
+        });
+      } catch (e) {}
+      isCapturedTab = false;
+    }
+
     try {
-      chrome.tabs.sendMessage(activeTabId, payload, (response) => {
+      if (activeFrameId !== 0) {
+        const p1 = chrome.tabs.sendMessage(activeTabId, payload, { frameId: activeFrameId }, () => {
+          if (chrome.runtime.lastError) {}
+        });
+        if (p1 && typeof p1.catch === "function") {
+          p1.catch(() => {});
+        }
+      }
+      const p2 = chrome.tabs.sendMessage(activeTabId, payload, () => {
         if (chrome.runtime.lastError) {}
       });
+      if (p2 && typeof p2.catch === "function") {
+        p2.catch(() => {});
+      }
     } catch (err) {
       // IPC send failed - continue with silent failure
     }
   }
 
   // Initial tab query
-  await queryActiveTabStatus();
+  if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
+    try {
+      await queryActiveTabStatus();
+    } catch (e) {
+      showNoVideoState();
+    }
+  } else {
+    showNoVideoState();
+  }
 
   // Listen for background tab state updates (keyboard shortcuts)
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === "statusUpdate" && message.status) {
-      if (Date.now() - _lastPopupAction < INTERACTION_GUARD_MS) {
-        return;
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message.action === "statusUpdate" && message.status) {
+        if (Date.now() - _lastPopupAction < INTERACTION_GUARD_MS) {
+          return;
+        }
+        parseStateResponse(message.status);
       }
-      parseStateResponse(message.status);
-    }
-  });
+    });
+  }
 
   // --- Bind Interactive Listeners ---
 
@@ -392,6 +547,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         sliderRafPending = false;
       });
     }
+  });
+
+  sliderInput.addEventListener("change", (e) => {
+    const val = parseFloat(e.target.value);
+    state.boostLevel = val;
+    sendActionToTab("setBoost", state.boostLevel, false);
   });
 
   // Master power toggle checkbox
@@ -457,13 +618,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     retryBtn.addEventListener("click", async () => {
       if (activeTabId) {
         try {
-          chrome.tabs.sendMessage(activeTabId, { action: "forceScan" }, (response) => {
+          if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+            const p1 = chrome.runtime.sendMessage({ action: "forceScanTab", tabId: activeTabId }, () => {
+              if (chrome.runtime.lastError) {}
+            });
+            if (p1 && typeof p1.catch === "function") {
+              p1.catch(() => {});
+            }
+          }
+          const p2 = chrome.tabs.sendMessage(activeTabId, { action: "forceScan" }, (response) => {
             if (chrome.runtime.lastError || !response) {
               queryActiveTabStatus();
             } else {
               parseStateResponse(response);
             }
           });
+          if (p2 && typeof p2.catch === "function") {
+            p2.catch(() => {});
+          }
           return;
         } catch (e) {}
       }
@@ -491,18 +663,33 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       if (activeTabId) {
         try {
-          chrome.tabs.sendMessage(activeTabId, {
+          const resetPayload = {
             action: "resetAll",
             value: {
               boostLevel: 1.0,
               isEnabled: true,
               audioProfile: "flat"
             }
-          }, () => { if (chrome.runtime.lastError) {} });
+          };
+          if (activeFrameId !== 0) {
+            const p1 = chrome.tabs.sendMessage(activeTabId, resetPayload, { frameId: activeFrameId }, () => {
+              if (chrome.runtime.lastError) {}
+            });
+            if (p1 && typeof p1.catch === "function") {
+              p1.catch(() => {});
+            }
+          }
+          const p2 = chrome.tabs.sendMessage(activeTabId, resetPayload, () => {
+            if (chrome.runtime.lastError) {}
+          });
+          if (p2 && typeof p2.catch === "function") {
+            p2.catch(() => {});
+          }
         } catch (err) {}
       }
       
       renderPopupUI();
     });
   }
+
 });

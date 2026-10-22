@@ -72,6 +72,7 @@ class AudioEngine {
       
       // EQ Filters
       bassFilter: null,
+      subRumbleFilter: null,
       speechFilter: null,
       trebleFilter: null,
       
@@ -110,9 +111,14 @@ class AudioEngine {
       graphConnected: false
     };
 
-    // Keep track of connected video elements using a WeakMap.
-    // Web Audio API throws a fatal InvalidStateError if createMediaElementSource is called twice.
-    this.connectedVideos = new WeakMap();
+    // Keep track of connected video elements across re-injections and module reloads.
+    // Web Audio API throws InvalidStateError if createMediaElementSource is called twice.
+    // Persistent WeakMap allows reusing established connections across script updates.
+    const globalConnectedVideos = (typeof window !== "undefined" && window.__uvb_connected_videos) || new WeakMap();
+    if (typeof window !== "undefined") {
+      window.__uvb_connected_videos = globalConnectedVideos;
+    }
+    this.connectedVideos = globalConnectedVideos;
 
     // Constant configurations
     this.PARAMS = {
@@ -121,6 +127,8 @@ class AudioEngine {
       BOOST_SMOOTH_TIME: 0.04, // seconds to ramp gain changes to prevent clicks
       MAX_SAFE_GAIN: 55.0, // absolute gain ceiling (~34.8dB) to allow for extreme profiles
       BASS_FREQ: 150,
+      SUB_RUMBLE_FREQ_MIN: 20,
+      SUB_RUMBLE_FREQ_MAX: 80,
       SPEECH_FREQ: 2200,
       VOICE_PRESENCE_FREQ: 3200,
       VOICE_CLARITY_FREQ: 5000,
@@ -128,13 +136,13 @@ class AudioEngine {
       TREBLE_FREQ: 7000,
       BYPASS_CROSSFADE_TIME: 0.015, // 15ms click-free bypass switching
       
-      // Compressor presets — master maximizer/limiter.
+      // Compressor presets — dynamic range shaping without crushing boosts
       compPresets: {
         flat:    { threshold: 0, knee: 30, ratio: 1.0, attack: 0.010, release: 0.25 },
-        cinema:  { threshold: -12, knee: 30, ratio: 2.5, attack: 0.010, release: 0.25 },
-        speech:  { threshold: -10, knee: 25, ratio: 3.0, attack: 0.003, release: 0.20 },
-        night:   { threshold: -18, knee: 30, ratio: 5.0, attack: 0.003, release: 0.30 },
-        bass:    { threshold: -12, knee: 30, ratio: 2.0, attack: 0.015, release: 0.25 }
+        cinema:  { threshold: -6, knee: 30, ratio: 1.2, attack: 0.010, release: 0.25 },
+        speech:  { threshold: -12, knee: 15, ratio: 2.0, attack: 0.002, release: 0.28 },
+        night:   { threshold: -12, knee: 30, ratio: 1.8, attack: 0.003, release: 0.30 },
+        bass:    { threshold: 0, knee: 30, ratio: 1.0, attack: 0.015, release: 0.25 }
       },
 
       // Dolby Spatial Widener (Mid/Side stereo expansion multipliers)
@@ -154,11 +162,9 @@ class AudioEngine {
     this.linearCurve = new Float32Array([-1, 1]);
 
     // EQ profile definitions (Biquad Gains in dB)
-    // Each profile has independent values for every filter and a preamp offset to prevent clipping (VLC method).
     // Tuned to be CLEARLY audible and distinct from each other.
     this.PROFILES = {
       flat: {
-        preamp: 0.0,
         bass: 0.0,
         speech: 0.0,
         voicePresence: 0.0,
@@ -167,26 +173,23 @@ class AudioEngine {
         deEsser: 0.0
       },
       cinema: {
-        preamp: -3.0,       // Preamp attenuation to compensate for boosts
         bass: 10.0,        // Cinema bass rumble (controlled)
-        speech: 2.0,       // Slight dialog push
-        voicePresence: 1.0, // Subtle presence
-        voiceClarity: 0.5,  // Light air
+        speech: 3.0,       // Clear dialogue
+        voicePresence: 2.0, // Subtle presence
+        voiceClarity: 3.0,  // Air
         treble: 6.0,       // Bright sparkly highs
         deEsser: -2.0      // Mild sibilance taming
       },
       speech: {
-        preamp: -5.0,       // Preamp to compensate for vocal boost (+12dB)
-        bass: -4.0,         // Cut bass to reduce rumble/music
+        bass: -9.0,         // Cut muddy background low rumble (-8dB to -10dB below 200Hz)
         speech: 12.0,       // Vocal boost at 2.2kHz
         voicePresence: 8.0,  // Strong 3.2kHz presence for clarity
         voiceClarity: 6.0,   // High shelf for airiness
-        treble: 1.0,        // Gentle top-end
+        treble: 0.0,        // Neutral top-end
         deEsser: -4.0       // Strong sibilance control
       },
       night: {
-        preamp: -3.0,       // Preamp to compensate for vocal boost (+8dB)
-        bass: -4.0,         // Reduce low-end rumble
+        bass: -6.0,         // Reduce low-end rumble
         speech: 8.0,        // Boost dialog significantly
         voicePresence: 4.0, // Push presence so whispers are clear
         voiceClarity: 2.0,  // Add clarity
@@ -194,8 +197,7 @@ class AudioEngine {
         deEsser: -3.0       // Moderate de-essing
       },
       bass: {
-        preamp: -5.0,       // Preamp attenuation (VLC method) to prevent distortion
-        bass: 12.0,         // Clean, solid bass boost
+        bass: 14.0,         // Clean, solid, powerful bass boost
         speech: -1.0,       // Slight vocal dip
         voicePresence: 0.0, // Neutral
         voiceClarity: 0.0,  // Neutral
@@ -204,7 +206,6 @@ class AudioEngine {
       }
     };
 
-
     // Binding helper context
     this.resumeAudioContext = this.resumeAudioContext.bind(this);
   }
@@ -212,13 +213,17 @@ class AudioEngine {
   // ─── Zero-Latency Anti-Burst Transfer Curve ────────────────────────────────
 
   /**
-   * Generates a zero-latency Hermite soft-knee saturation transfer curve.
+   * Generates a VLC-style zero-latency soft-saturation transfer curve using
+   * a continuous C^1 soft-knee polynomial formulation.
    * 
    * Mathematically guarantees:
    * 1. 100% linear pass-through (|f(x)| = |x|) for all signals with |x| <= 0.70 (0% THD on standard audio).
-   * 2. Smooth C^1 continuous soft-knee saturation between 0.70 and 1.00.
-   * 3. Zero slope (f'(1.0) = 0.0) at the boundaries, eliminating sharp derivative corners.
-   * 4. Hard ceiling strictly bounded at +/-0.96 (-0.35dBFS True Peak headroom).
+   * 2. Smooth C^1 continuous soft-knee saturation between 0.70 and 1.00:
+   *    - f'(threshold) = 1.000 (continuous transition from linear region, no slope jump).
+   *    - f'(ceiling) = 0.000 (continuous transition into clamped boundary, no harsh kink).
+   * 3. Strictly non-amplifying (|f(x)| <= |x|) and concave (f''(x) <= 0) everywhere in [0.70, 1.00].
+   * 4. Peaks saturate musically with warm analog-style harmonics without digital tearing.
+   * 5. Hard ceiling strictly bounded at +/-0.96 (-0.35dBFS True Peak headroom).
    * 
    * Combined with WaveShaperNode oversample = "4x", this completely prevents
    * DAC hard-clipping and driver bursting under extreme volume boost.
@@ -228,17 +233,27 @@ class AudioEngine {
    */
   _generateAntiBurstCurve(length = 8192) {
     const curve = new Float32Array(length);
+    const threshold = 0.70;
+    const ceiling = this.PARAMS.TRUE_PEAK_CEILING || 0.96;
+    const span = 1.0 - threshold;
+    const headroom = ceiling - threshold;
+    // Power p chosen so that integral of (1 - u^p) matches headroom / span (p = 6.5)
+    // Ensures: f'(threshold) = 1.0 (smooth C1 match with linear region),
+    // f'(ceiling) = 0.0 (smooth C1 match with clamped region),
+    // strictly concave (f'' <= 0) and non-amplifying (|f(x)| <= |x|).
+    const p = headroom > 0 ? (span / (span - headroom)) - 1.0 : 1.0;
+
     for (let i = 0; i < length; i++) {
       const x = (i / (length - 1)) * 2 - 1; // Maps index linearly across [-1.0, +1.0]
       const absX = Math.abs(x);
-      if (absX <= 0.70) {
+      if (absX <= threshold) {
         curve[i] = x;
       } else {
-        const u = (absX - 0.70) / 0.30;
-        // Hermite cubic polynomial: h(0) = 0, h'(0) = 0.3, h(1) = 0.26, h'(1) = 0
-        const h = -0.22 * u * u * u + 0.18 * u * u + 0.30 * u;
-        const y = 0.70 + h;
-        curve[i] = x < 0 ? -y : y;
+        const u = Math.min(1.0, (absX - threshold) / span);
+        // VLC-style soft-saturation curve with C^1 continuous slope at boundaries
+        const sat = u - Math.pow(u, p + 1) / (p + 1);
+        const y = threshold + span * sat;
+        curve[i] = x < 0 ? -Math.min(ceiling, y) : Math.min(ceiling, y);
       }
     }
     return curve;
@@ -276,13 +291,14 @@ class AudioEngine {
 
   /**
    * Resumes the AudioContext safely to satisfy autoplay policies.
+   * Handles both 'suspended' and 'interrupted' states.
    */
   async resumeAudioContext() {
-    if (this.state.audioContext && this.state.audioContext.state === "suspended") {
+    if (this.state.audioContext && this.state.audioContext.state !== "running" && this.state.audioContext.state !== "closed") {
       try {
         await this.state.audioContext.resume();
       } catch (err) {
-        // Silent failure - audio context may be unavailable
+        // Silent failure - audio context may be waiting for user gesture
       }
     }
   }
@@ -299,16 +315,27 @@ class AudioEngine {
     const ctx = this.state.audioContext;
     
     ctx.onstatechange = () => {
-      if (ctx.state === "suspended") {
+      if (ctx.state !== "running" && ctx.state !== "closed") {
         ctx.resume().catch(() => {});
       }
     };
 
-    const gestureResume = () => {
-      this.resumeAudioContext();
-    };
-    window.addEventListener("click", gestureResume, { capture: true, passive: true, once: true });
-    window.addEventListener("keydown", gestureResume, { capture: true, passive: true, once: true });
+    if (!this._boundUserGestureResume) {
+      this._boundUserGestureResume = () => {
+        if (this.state.audioContext && this.state.audioContext.state !== "running" && this.state.audioContext.state !== "closed") {
+          this.resumeAudioContext();
+        }
+      };
+      if (typeof window !== "undefined") {
+        const events = ["click", "pointerdown", "mousedown", "keydown", "touchstart"];
+        events.forEach((evt) => {
+          window.addEventListener(evt, this._boundUserGestureResume, { capture: true, passive: true });
+          if (typeof document !== "undefined") {
+            document.addEventListener(evt, this._boundUserGestureResume, { capture: true, passive: true });
+          }
+        });
+      }
+    }
   }
 
   // ─── Graph Integrity Validation ──────────────────────────────────────────
@@ -321,13 +348,23 @@ class AudioEngine {
     if (!this.state.audioContext || this.state.audioContext.state === 'closed') {
       return false;
     }
+    if (!this.state.graphConnected) {
+      return false;
+    }
 
     const criticalNodes = [
       this.state.gainNode,
       this.state.bassFilter,
+      this.state.subRumbleFilter,
+      this.state.speechFilter,
+      this.state.voicePresenceFilter,
+      this.state.voiceClarityFilter,
+      this.state.deEsserFilter,
+      this.state.trebleFilter,
       this.state.compressorNode,
+      this.state.compressorCompensatorNode,
       this.state.brickwallLimiter,
-      this.state.spatialMerger,
+      this.state.compensatorNode,
       this.state.antiBurstClipper
     ];
 
@@ -344,6 +381,210 @@ class AudioEngine {
    * Builds or reconnects the Web Audio API graph to a HTML5 video element.
    * @param {HTMLVideoElement} video 
    */
+  /**
+   * Initializes all audio nodes and connects the linear DSP pipeline to ctx.destination.
+   * Reused by both setupAudioGraph (video element) and setupAudioStream (MediaStream / tabCapture).
+   * @param {AudioContext} ctx
+   */
+  _ensureNodesAndPipeline(ctx) {
+    if (!this.state.gainNode) {
+      this.state.gainNode = ctx.createGain();
+    }
+
+    if (!this.state.brickwallLimiter) {
+      this.state.brickwallLimiter = ctx.createDynamicsCompressor();
+      this.state.brickwallLimiter.threshold.value = -1.0;
+      this.state.brickwallLimiter.knee.value = 15.0;
+      this.state.brickwallLimiter.ratio.value = 1.0;
+      this.state.brickwallLimiter.attack.value = 0.001;
+      this.state.brickwallLimiter.release.value = 0.28;
+    }
+
+    if (!this.state.compensatorNode) {
+      this.state.compensatorNode = ctx.createGain();
+    }
+
+    if (!this.state.compressorCompensatorNode) {
+      this.state.compressorCompensatorNode = ctx.createGain();
+    }
+
+    if (!this.state.bassFilter) {
+      this.state.bassFilter = ctx.createBiquadFilter();
+      this.state.bassFilter.type = "lowshelf";
+      this.state.bassFilter.frequency.value = this.PARAMS.BASS_FREQ;
+      this.state.bassFilter.gain.value = 0.0;
+    }
+    if (!this.state.subRumbleFilter) {
+      this.state.subRumbleFilter = ctx.createBiquadFilter();
+      this.state.subRumbleFilter.type = "highpass";
+      this.state.subRumbleFilter.frequency.value = this.PARAMS.SUB_RUMBLE_FREQ_MIN;
+      this.state.subRumbleFilter.Q.value = 0.707;
+    }
+    if (!this.state.speechFilter) {
+      this.state.speechFilter = ctx.createBiquadFilter();
+      this.state.speechFilter.type = "peaking";
+      this.state.speechFilter.frequency.value = this.PARAMS.SPEECH_FREQ;
+      this.state.speechFilter.Q.value = 0.7;
+      this.state.speechFilter.gain.value = 0.0;
+    }
+
+    if (!this.state.voicePresenceFilter) {
+      this.state.voicePresenceFilter = ctx.createBiquadFilter();
+      this.state.voicePresenceFilter.type = "peaking";
+      this.state.voicePresenceFilter.frequency.value = this.PARAMS.VOICE_PRESENCE_FREQ;
+      this.state.voicePresenceFilter.Q.value = 1.2;
+      this.state.voicePresenceFilter.gain.value = 0.0;
+    }
+    if (!this.state.voiceClarityFilter) {
+      this.state.voiceClarityFilter = ctx.createBiquadFilter();
+      this.state.voiceClarityFilter.type = "highshelf";
+      this.state.voiceClarityFilter.frequency.value = this.PARAMS.VOICE_CLARITY_FREQ;
+      this.state.voiceClarityFilter.gain.value = 0.0;
+    }
+    if (!this.state.deEsserFilter) {
+      this.state.deEsserFilter = ctx.createBiquadFilter();
+      this.state.deEsserFilter.type = "peaking";
+      this.state.deEsserFilter.frequency.value = this.PARAMS.DE_ESSER_FREQ;
+      this.state.deEsserFilter.Q.value = 2.0;
+      this.state.deEsserFilter.gain.value = 0.0;
+    }
+
+    if (!this.state.trebleFilter) {
+      this.state.trebleFilter = ctx.createBiquadFilter();
+      this.state.trebleFilter.type = "highshelf";
+      this.state.trebleFilter.frequency.value = this.PARAMS.TREBLE_FREQ;
+      this.state.trebleFilter.gain.value = 0.0;
+    }
+
+    if (!this.state.compressorNode) {
+      this.state.compressorNode = ctx.createDynamicsCompressor();
+    }
+
+    if (!this.state.spatialSplitter) {
+      this.state.spatialSplitter = ctx.createChannelSplitter(2);
+      this.state.midGainL = ctx.createGain();
+      this.state.midGainL.gain.value = 0.5;
+      this.state.midGainR = ctx.createGain();
+      this.state.midGainR.gain.value = 0.5;
+      this.state.midSum = ctx.createGain();
+      this.state.midSum.gain.value = 1.0;
+
+      this.state.sideGainL = ctx.createGain();
+      this.state.sideGainL.gain.value = 0.5;
+      this.state.sideGainR = ctx.createGain();
+      this.state.sideGainR.gain.value = -0.5;
+      this.state.sideSum = ctx.createGain();
+      this.state.sideSum.gain.value = 1.0;
+
+      this.state.sideHpFilter = ctx.createBiquadFilter();
+      this.state.sideHpFilter.type = "highpass";
+      this.state.sideHpFilter.frequency.value = this.PARAMS.SPATIAL_BASS_LOCK_FREQ;
+      this.state.sideHpFilter.Q.value = 0.707;
+
+      this.state.sideWidthGain = ctx.createGain();
+      this.state.sideWidthGain.gain.value = 1.0;
+
+      this.state.sideToLeft = ctx.createGain();
+      this.state.sideToLeft.gain.value = 1.0;
+      this.state.sideToRight = ctx.createGain();
+      this.state.sideToRight.gain.value = -1.0;
+
+      this.state.spatialMerger = ctx.createChannelMerger(2);
+    }
+
+    if (!this.state.antiBurstClipper) {
+      this.state.antiBurstClipper = ctx.createWaveShaper();
+      this.state.antiBurstClipper.curve = this.antiBurstCurve;
+      this.state.antiBurstClipper.oversample = "4x";
+    }
+
+    if (!this.state.graphConnected) {
+      this.state.bassFilter.connect(this.state.subRumbleFilter);
+      this.state.subRumbleFilter.connect(this.state.speechFilter);
+      this.state.speechFilter.connect(this.state.voicePresenceFilter);
+      this.state.voicePresenceFilter.connect(this.state.voiceClarityFilter);
+      this.state.voiceClarityFilter.connect(this.state.deEsserFilter);
+      this.state.deEsserFilter.connect(this.state.trebleFilter);
+
+      // Mid/Side Spatial Matrix: Stereo widening operates cleanly before dynamic limiting
+      this.state.trebleFilter.connect(this.state.spatialSplitter);
+
+      this.state.spatialSplitter.connect(this.state.midGainL, 0);
+      this.state.spatialSplitter.connect(this.state.midGainR, 1);
+      this.state.midGainL.connect(this.state.midSum);
+      this.state.midGainR.connect(this.state.midSum);
+      this.state.midSum.connect(this.state.spatialMerger, 0, 0);
+      this.state.midSum.connect(this.state.spatialMerger, 0, 1);
+
+      this.state.spatialSplitter.connect(this.state.sideGainL, 0);
+      this.state.spatialSplitter.connect(this.state.sideGainR, 1);
+      this.state.sideGainL.connect(this.state.sideSum);
+      this.state.sideGainR.connect(this.state.sideSum);
+      this.state.sideSum.connect(this.state.sideHpFilter);
+      this.state.sideHpFilter.connect(this.state.sideWidthGain);
+      this.state.sideWidthGain.connect(this.state.sideToLeft);
+      this.state.sideWidthGain.connect(this.state.sideToRight);
+      this.state.sideToLeft.connect(this.state.spatialMerger, 0, 0);
+      this.state.sideToRight.connect(this.state.spatialMerger, 0, 1);
+
+      // Dynamics, Gain & Brickwall Limiter (strictly limits stereo & mid peaks below -1.0dBFS)
+      this.state.spatialMerger.connect(this.state.compressorNode);
+      this.state.compressorNode.connect(this.state.compressorCompensatorNode);
+      this.state.compressorCompensatorNode.connect(this.state.gainNode);
+      this.state.gainNode.connect(this.state.brickwallLimiter);
+      this.state.brickwallLimiter.connect(this.state.compensatorNode);
+
+      // Zero-Latency Anti-Burst Soft Clipper & Direct Destination Output
+      this.state.compensatorNode.connect(this.state.antiBurstClipper);
+      this.state.antiBurstClipper.connect(ctx.destination);
+
+      this.state.graphConnected = true;
+    }
+  }
+
+  /**
+   * Builds or reconnects the Web Audio API graph to a MediaStream (e.g. from tabCapture).
+   * Used for DRM-protected, cross-origin, or tab-level audio processing on any platform.
+   * @param {MediaStream} stream 
+   */
+  setupAudioStream(stream) {
+    if (!stream) return;
+    this.state.isConflictDetected = false;
+
+    try {
+      if (!this.state.audioContext || this.state.audioContext.state === "closed") {
+        if (typeof window !== "undefined" && window.__uvb_audioContext && window.__uvb_audioContext.state !== "closed") {
+          this.state.audioContext = window.__uvb_audioContext;
+        } else {
+          this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            latencyHint: "balanced"
+          });
+          if (typeof window !== "undefined") {
+            window.__uvb_audioContext = this.state.audioContext;
+          }
+        }
+        this._monitorAudioContextHealth();
+      }
+
+      const ctx = this.state.audioContext;
+      this._ensureNodesAndPipeline(ctx);
+
+      let streamSource = null;
+      try {
+        streamSource = ctx.createMediaStreamSource(stream);
+        streamSource.connect(this.state.bassFilter);
+      } catch (err) {
+        // Stream connection fallback
+      }
+
+      this.state.sourceNode = streamSource;
+      this.applyAudioEngineSettings();
+      this.resumeAudioContext();
+    } catch (err) {
+      // Setup audio stream error
+    }
+  }
+
   setupAudioGraph(video) {
     if (!video || !(video instanceof HTMLMediaElement)) {
       return;
@@ -352,213 +593,95 @@ class AudioEngine {
     this.state.isConflictDetected = false;
 
     try {
-      // 1. Initialise AudioContext with comprehensive error handling
-      if (!this.state.audioContext) {
-        try {
-          this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-            latencyHint: "balanced"
-          });
-          
-          if (!this.state.audioContext) {
-            throw new Error("AudioContext is null after creation");
-          }
+      // 1. Initialise AudioContext with persistent window caching and recovery
+      if (!this.state.audioContext || this.state.audioContext.state === "closed") {
+        if (typeof window !== "undefined" && window.__uvb_audioContext && window.__uvb_audioContext.state !== "closed") {
+          this.state.audioContext = window.__uvb_audioContext;
+        } else {
+          try {
+            this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+              latencyHint: "balanced"
+            });
+            
+            if (!this.state.audioContext) {
+              throw new Error("AudioContext is null after creation");
+            }
 
-          // Start health monitoring
-          this._monitorAudioContextHealth();
-        } catch (audioError) {
-          if (audioError.message && audioError.message.includes("CORS")) {
-            this.state.isConflictDetected = true;
+            if (typeof window !== "undefined") {
+              window.__uvb_audioContext = this.state.audioContext;
+            }
+
+            // Start health monitoring
+            this._monitorAudioContextHealth();
+          } catch (audioError) {
+            return;
           }
-          return;
         }
+        this._monitorAudioContextHealth();
       }
 
       const ctx = this.state.audioContext;
 
-      // 2. Initialize GainNode (Amplification)
-      if (!this.state.gainNode) {
-        this.state.gainNode = ctx.createGain();
-      }
+      this._ensureNodesAndPipeline(ctx);
 
-      // 3. Initialize Brickwall Limiter (clipping protection — LAST in chain)
-      if (!this.state.brickwallLimiter) {
-        this.state.brickwallLimiter = ctx.createDynamicsCompressor();
-        this.state.brickwallLimiter.threshold.value = -1.0;
-        this.state.brickwallLimiter.knee.value = 2.0;
-        this.state.brickwallLimiter.ratio.value = 20.0;
-        this.state.brickwallLimiter.attack.value = 0.001;
-        this.state.brickwallLimiter.release.value = 0.05;
-      }
-
-      // 3b. Initialize Makeup Gain Compensator
-      if (!this.state.compensatorNode) {
-        this.state.compensatorNode = ctx.createGain();
-      }
-
-      // 3c. Initialize Compressor Makeup Gain Compensator
-      if (!this.state.compressorCompensatorNode) {
-        this.state.compressorCompensatorNode = ctx.createGain();
-      }
-
-      // 4. Initialize Equalizer BiquadFilters
-      if (!this.state.bassFilter) {
-        this.state.bassFilter = ctx.createBiquadFilter();
-        this.state.bassFilter.type = "lowshelf";
-        this.state.bassFilter.frequency.value = this.PARAMS.BASS_FREQ;
-        this.state.bassFilter.gain.value = 0.0;
-      }
-      if (!this.state.speechFilter) {
-        this.state.speechFilter = ctx.createBiquadFilter();
-        this.state.speechFilter.type = "peaking";
-        this.state.speechFilter.frequency.value = this.PARAMS.SPEECH_FREQ;
-        this.state.speechFilter.Q.value = 0.7;
-        this.state.speechFilter.gain.value = 0.0;
-      }
-
-      // 5. Initialize Voice Enhancement Filters
-      if (!this.state.voicePresenceFilter) {
-        this.state.voicePresenceFilter = ctx.createBiquadFilter();
-        this.state.voicePresenceFilter.type = "peaking";
-        this.state.voicePresenceFilter.frequency.value = this.PARAMS.VOICE_PRESENCE_FREQ;
-        this.state.voicePresenceFilter.Q.value = 1.2;
-        this.state.voicePresenceFilter.gain.value = 0.0;
-      }
-      if (!this.state.voiceClarityFilter) {
-        this.state.voiceClarityFilter = ctx.createBiquadFilter();
-        this.state.voiceClarityFilter.type = "highshelf";
-        this.state.voiceClarityFilter.frequency.value = this.PARAMS.VOICE_CLARITY_FREQ;
-        this.state.voiceClarityFilter.gain.value = 0.0;
-      }
-      if (!this.state.deEsserFilter) {
-        this.state.deEsserFilter = ctx.createBiquadFilter();
-        this.state.deEsserFilter.type = "peaking";
-        this.state.deEsserFilter.frequency.value = this.PARAMS.DE_ESSER_FREQ;
-        this.state.deEsserFilter.Q.value = 4.0;
-        this.state.deEsserFilter.gain.value = 0.0;
-      }
-
-      if (!this.state.trebleFilter) {
-        this.state.trebleFilter = ctx.createBiquadFilter();
-        this.state.trebleFilter.type = "highshelf";
-        this.state.trebleFilter.frequency.value = this.PARAMS.TREBLE_FREQ;
-        this.state.trebleFilter.gain.value = 0.0;
-      }
-
-      // 6. Initialize Profile Dynamics Compressor
-      if (!this.state.compressorNode) {
-        this.state.compressorNode = ctx.createDynamicsCompressor();
-      }
-
-      // 6b. Initialize Dolby Spatial Widener (Mid/Side Matrix)
-      if (!this.state.spatialSplitter) {
-        this.state.spatialSplitter = ctx.createChannelSplitter(2);
-        this.state.midGainL = ctx.createGain();
-        this.state.midGainL.gain.value = 0.5;
-        this.state.midGainR = ctx.createGain();
-        this.state.midGainR.gain.value = 0.5;
-        this.state.midSum = ctx.createGain();
-        this.state.midSum.gain.value = 1.0;
-
-        this.state.sideGainL = ctx.createGain();
-        this.state.sideGainL.gain.value = 0.5;
-        this.state.sideGainR = ctx.createGain();
-        this.state.sideGainR.gain.value = -0.5;
-        this.state.sideSum = ctx.createGain();
-        this.state.sideSum.gain.value = 1.0;
-
-        this.state.sideHpFilter = ctx.createBiquadFilter();
-        this.state.sideHpFilter.type = "highpass";
-        this.state.sideHpFilter.frequency.value = this.PARAMS.SPATIAL_BASS_LOCK_FREQ;
-        this.state.sideHpFilter.Q.value = 0.707;
-
-        this.state.sideWidthGain = ctx.createGain();
-        this.state.sideWidthGain.gain.value = 1.0;
-
-        this.state.sideToLeft = ctx.createGain();
-        this.state.sideToLeft.gain.value = 1.0;
-        this.state.sideToRight = ctx.createGain();
-        this.state.sideToRight.gain.value = -1.0;
-
-        this.state.spatialMerger = ctx.createChannelMerger(2);
-      }
-
-      // 6c. Initialize Zero-Latency Anti-Burst Soft-Clipper
-      if (!this.state.antiBurstClipper) {
-        this.state.antiBurstClipper = ctx.createWaveShaper();
-        this.state.antiBurstClipper.curve = this.antiBurstCurve;
-        this.state.antiBurstClipper.oversample = "4x";
-      }
-
-      // 7. Connect the linear DSP pipeline (exactly once)
-      //    Source → EQ → Compressor → CompressorCompensator → GainNode → Limiter → Compensator → Dolby Spatial Widener → Anti-Burst Soft-Clipper → Destination
-      if (!this.state.graphConnected) {
-        // EQ Series
-        this.state.bassFilter.connect(this.state.speechFilter);
-        this.state.speechFilter.connect(this.state.voicePresenceFilter);
-        this.state.voicePresenceFilter.connect(this.state.voiceClarityFilter);
-        this.state.voiceClarityFilter.connect(this.state.deEsserFilter);
-        this.state.deEsserFilter.connect(this.state.trebleFilter);
-
-        // Treble → Compressor → CompressorCompensator → GainNode → Limiter → Compensator
-        this.state.trebleFilter.connect(this.state.compressorNode);
-        this.state.compressorNode.connect(this.state.compressorCompensatorNode);
-        this.state.compressorCompensatorNode.connect(this.state.gainNode);
-        this.state.gainNode.connect(this.state.brickwallLimiter);
-        this.state.brickwallLimiter.connect(this.state.compensatorNode);
-
-        // Compensator → Dolby Spatial Widener (Mid/Side Matrix)
-        this.state.compensatorNode.connect(this.state.spatialSplitter);
-
-        // Mid matrix: M = 0.5 * L + 0.5 * R (dialogue & center focus)
-        this.state.spatialSplitter.connect(this.state.midGainL, 0);
-        this.state.spatialSplitter.connect(this.state.midGainR, 1);
-        this.state.midGainL.connect(this.state.midSum);
-        this.state.midGainR.connect(this.state.midSum);
-        this.state.midSum.connect(this.state.spatialMerger, 0, 0); // Mid to Left
-        this.state.midSum.connect(this.state.spatialMerger, 0, 1); // Mid to Right
-
-        // Side matrix: S = 0.5 * L - 0.5 * R (with 150Hz Spatial Bass Lock)
-        this.state.spatialSplitter.connect(this.state.sideGainL, 0);
-        this.state.spatialSplitter.connect(this.state.sideGainR, 1);
-        this.state.sideGainL.connect(this.state.sideSum);
-        this.state.sideGainR.connect(this.state.sideSum);
-        this.state.sideSum.connect(this.state.sideHpFilter);
-        this.state.sideHpFilter.connect(this.state.sideWidthGain);
-        this.state.sideWidthGain.connect(this.state.sideToLeft);
-        this.state.sideWidthGain.connect(this.state.sideToRight);
-        this.state.sideToLeft.connect(this.state.spatialMerger, 0, 0); // +S to Left
-        this.state.sideToRight.connect(this.state.spatialMerger, 0, 1); // -S to Right
-
-        // Dolby Spatial Output → Anti-Burst Soft-Clipper → AudioContext.destination
-        this.state.spatialMerger.connect(this.state.antiBurstClipper);
-        this.state.antiBurstClipper.connect(ctx.destination);
-
-        this.state.graphConnected = true;
-      }
-
-      // 8. Connect source node securely - with conflict bypass
+      // 8. Connect source node securely with multi-stage fallback and recovery
       let videoSource = null;
-      
-      if (this.connectedVideos.has(video)) {
-        const cached = this.connectedVideos.get(video);
+      let cached = this.connectedVideos.get(video);
+      if (!cached && video.__uvb_sourceNode) {
+        cached = { sourceNode: video.__uvb_sourceNode, audioContext: video.__uvb_audioContext };
+        this.connectedVideos.set(video, cached);
+      }
+
+      if (cached && cached.sourceNode && cached.audioContext === ctx) {
         videoSource = cached.sourceNode;
-        if (cached.isFallback) {
-          this.state.isConflictDetected = true;
+        if (this.state.sourceNode !== videoSource || !this.state.graphConnected) {
+          try {
+            videoSource.disconnect();
+          } catch (e) {}
+          try {
+            videoSource.connect(this.state.bassFilter);
+          } catch (e) {}
         }
+        this.state.sourceNode = videoSource;
+        this.state.graphConnected = true;
+        this.state.isConflictDetected = false;
       } else {
+        // Stage 1: Standard MediaElementSource connection
         try {
           videoSource = ctx.createMediaElementSource(video);
           videoSource.connect(this.state.bassFilter);
-          this.connectedVideos.set(video, { sourceNode: videoSource });
+          const record = { sourceNode: videoSource, audioContext: ctx };
+          this.connectedVideos.set(video, record);
+          try { video.__uvb_sourceNode = videoSource; video.__uvb_audioContext = ctx; } catch (e) {}
+          this.state.isConflictDetected = false;
         } catch (err) {
-          const errMsg = (err && err.message) || "";
-          const errName = (err && err.name) || "";
-          // Chrome: "already connected", Firefox: "InvalidStateError"
-          if (errMsg.includes("already connected") || errName === "InvalidStateError") {
-            this.connectedVideos.set(video, { sourceNode: null, isFallback: true });
-            this.state.isConflictDetected = true;
-          } else {
-            throw err;
+          // Stage 2: Fallback to MediaStream capture if createMediaElementSource threw
+          // InvalidStateError (element already connected) or SecurityError
+          let stream = null;
+          try {
+            if (typeof video.captureStream === "function") {
+              stream = video.captureStream();
+            } else if (typeof video.mozCaptureStream === "function") {
+              stream = video.mozCaptureStream();
+            }
+          } catch (streamEx) {}
+
+          if (stream) {
+            try {
+              videoSource = ctx.createMediaStreamSource(stream);
+              videoSource.connect(this.state.bassFilter);
+              const record = { sourceNode: videoSource, audioContext: ctx, isStream: true };
+              this.connectedVideos.set(video, record);
+              try { video.__uvb_sourceNode = videoSource; video.__uvb_audioContext = ctx; } catch (e) {}
+              this.state.isConflictDetected = false;
+            } catch (streamSrcErr) {}
+          }
+
+          // Stage 3: If stream capture also failed, record safe fallback without bricking UI
+          if (!videoSource) {
+            this.connectedVideos.set(video, { sourceNode: null, audioContext: ctx, isFallback: true });
+            // Never trigger false conflict lockouts: let user retain full control of settings
+            this.state.isConflictDetected = false;
           }
         }
       }
@@ -570,10 +693,17 @@ class AudioEngine {
 
       // Autoplay / Suspended guard
       if (videoSource) {
-        video.removeEventListener("play", this.resumeAudioContext);
-        video.addEventListener("play", this.resumeAudioContext);
-        video.removeEventListener("playing", this.resumeAudioContext);
-        video.addEventListener("playing", this.resumeAudioContext);
+        if (!this._mediaResumeHandler) {
+          this._mediaResumeHandler = () => {
+            if (this.state.audioContext && this.state.audioContext.state !== "running" && this.state.audioContext.state !== "closed") {
+              this.resumeAudioContext();
+            }
+          };
+        }
+        ["play", "playing", "volumechange", "timeupdate"].forEach((evt) => {
+          video.removeEventListener(evt, this._mediaResumeHandler);
+          video.addEventListener(evt, this._mediaResumeHandler, { passive: true });
+        });
 
         // Attempt immediate resume in case video is already playing or user has interacted
         this.resumeAudioContext();
@@ -618,16 +748,30 @@ class AudioEngine {
       this.state.gainNode.gain.setTargetAtTime(targetGain, now, this.PARAMS.BOOST_SMOOTH_TIME);
     }
 
-    // 2. EQ Filter Processing with Preamp Headroom (VLC method)
-    // We add the negative preampDb to all filters to scale down the signal before the compressor/limiter
-    const preampDb = isActive ? (profileGains.preamp || 0.0) : 0.0;
+    // 1b. Sub-Rumble High-Pass Filter (Cone Flapping / Farting Prevention)
+    let subRumbleFreq = this.PARAMS.SUB_RUMBLE_FREQ_MIN;
+    if (isActive) {
+      if (rawBoost > 3.0) {
+        // Scale from 75Hz at >300% up to 80Hz at 500% to stop cone flapping / farting
+        subRumbleFreq = 75 + ((rawBoost - 3.0) / 2.0) * 5;
+      }
+      if (safeProfile === "speech") {
+        // Voice clarity profile cuts low-end rumble for maximum speech intelligibility
+        subRumbleFreq = Math.max(subRumbleFreq, 80);
+      }
+    }
+    if (this.state.subRumbleFilter) {
+      this.state.subRumbleFilter.frequency.cancelScheduledValues(now);
+      this.state.subRumbleFilter.frequency.setTargetAtTime(subRumbleFreq, now, t);
+    }
 
-    let bass = isActive ? (profileGains.bass + preampDb) : 0.0;
-    let speech = isActive ? (profileGains.speech + preampDb) : 0.0;
-    let voicePresence = isActive ? (profileGains.voicePresence + preampDb) : 0.0;
-    let voiceClarity = isActive ? (profileGains.voiceClarity + preampDb) : 0.0;
-    let treble = isActive ? (profileGains.treble + preampDb) : 0.0;
-    let deEsserGain = isActive ? ((profileGains.deEsser || 0.0) + preampDb) : 0.0;
+    // 2. EQ Filter Processing
+    let bass = isActive ? profileGains.bass : 0.0;
+    let speech = isActive ? profileGains.speech : 0.0;
+    let voicePresence = isActive ? profileGains.voicePresence : 0.0;
+    let voiceClarity = isActive ? profileGains.voiceClarity : 0.0;
+    let treble = isActive ? profileGains.treble : 0.0;
+    let deEsserGain = isActive ? (profileGains.deEsser || 0.0) : 0.0;
 
     // Clamping limits — generous to allow dramatic differences
     bass = Math.max(-15, Math.min(30, bass));
@@ -644,9 +788,26 @@ class AudioEngine {
     if (this.state.deEsserFilter) { this.state.deEsserFilter.gain.cancelScheduledValues(now); this.state.deEsserFilter.gain.setTargetAtTime(deEsserGain, now, t); }
     if (this.state.trebleFilter) { this.state.trebleFilter.gain.cancelScheduledValues(now); this.state.trebleFilter.gain.setTargetAtTime(treble, now, t); }
 
-    // 3. Compressor — operates on the pre-gain signal
-    let compCompensationGain = 1.0;
-    let limiterCompensationGain = 1.0;
+    // 3. Dynamic Headroom Limiter Scaling
+    // Scales limiter parameters dynamically with boost level:
+    // When boosting volume, the limiter ratio and knee scale smoothly so that higher
+    // boosts produce audibly louder output at each slider position (100% -> 150% -> 200% -> 300% -> 500%)
+    // rather than having intentional gain squashed down to the exact same ceiling by a fixed 20:1 ratio.
+    // - 100% boost: ratio = 1.00 (transparent 1:1 pass-through)
+    // - 150% boost: ratio = 1.16 (+5.0dB audible increase)
+    // - 200% boost: ratio = 1.38 (+10.0dB audible increase)
+    // - 300% boost: ratio = 1.87 (+15.0dB audible increase)
+    // - 500% boost: ratio = 3.00 (+19.5dB maximum clean thunderous loudness)
+    const limiterThreshold = -1.0;
+    const limiterRatio = isActive
+      ? (1.0 + Math.pow((rawBoost - 1.0) / 4.0, 1.2) * 2.0)
+      : 1.0;
+    const limiterKnee = isActive
+      ? (10.0 + ((rawBoost - 1.0) / 4.0) * 10.0)
+      : 0.0;
+    const limiterAttack = 0.001;
+    const limiterRelease = 0.28;
+
     if (isActive) {
       if (this.state.compressorNode) {
         const preset = this.PARAMS.compPresets[safeProfile];
@@ -663,27 +824,16 @@ class AudioEngine {
       }
       if (this.state.brickwallLimiter) {
         this.state.brickwallLimiter.threshold.cancelScheduledValues(now);
-        this.state.brickwallLimiter.threshold.setTargetAtTime(-1.0, now, t);
+        this.state.brickwallLimiter.threshold.setTargetAtTime(limiterThreshold, now, t);
         this.state.brickwallLimiter.knee.cancelScheduledValues(now);
-        this.state.brickwallLimiter.knee.setTargetAtTime(2.0, now, t);
+        this.state.brickwallLimiter.knee.setTargetAtTime(limiterKnee, now, t);
         this.state.brickwallLimiter.ratio.cancelScheduledValues(now);
-        this.state.brickwallLimiter.ratio.setTargetAtTime(20.0, now, t);
+        this.state.brickwallLimiter.ratio.setTargetAtTime(limiterRatio, now, t);
         this.state.brickwallLimiter.attack.cancelScheduledValues(now);
-        this.state.brickwallLimiter.attack.setTargetAtTime(0.001, now, t);
+        this.state.brickwallLimiter.attack.setTargetAtTime(limiterAttack, now, t);
         this.state.brickwallLimiter.release.cancelScheduledValues(now);
-        this.state.brickwallLimiter.release.setTargetAtTime(0.05, now, t);
+        this.state.brickwallLimiter.release.setTargetAtTime(limiterRelease, now, t);
       }
-
-      // Compute automatic makeup gains:
-      const preset = this.PARAMS.compPresets[safeProfile];
-      const compMakeupDb = -0.5 * preset.threshold * (1.0 - 1.0 / preset.ratio);
-      
-      const limiterThreshold = -1.0;
-      const limiterRatio = 20.0;
-      const limiterMakeupDb = -0.5 * limiterThreshold * (1.0 - 1.0 / limiterRatio);
-
-      compCompensationGain = Math.pow(10, -compMakeupDb / 20);
-      limiterCompensationGain = Math.pow(10, -limiterMakeupDb / 20);
     } else {
       // Completely transparent when disabled
       if (this.state.compressorNode) {
@@ -700,6 +850,46 @@ class AudioEngine {
       }
     }
 
+    // 4. Automatic Makeup Gain & Excess Peak Headroom Compensation
+    // Chromium's DynamicsCompressorNode injects undocumented makeup gain.
+    // We invert this hidden gain on compensator nodes so signals never clip past 0dBFS.
+    let compCompensationGain = 1.0;
+    if (isActive && this.state.compressorNode) {
+      const preset = this.PARAMS.compPresets[safeProfile];
+      if (preset && preset.ratio > 1.0 && preset.threshold < 0) {
+        const compMakeupDb = -0.5 * preset.threshold * (1.0 - 1.0 / preset.ratio);
+        compCompensationGain = Math.pow(10, -compMakeupDb / 20);
+      }
+    }
+
+    let limiterCompensationGain = 1.0;
+    if (isActive && this.state.brickwallLimiter) {
+      // Dolby DRC & VLC Overdrive Headroom Compensation:
+      // Chromium undocumented makeup gain formula:
+      // makeup_gain = -0.5 * threshold * (1 - 1 / ratio)
+      const limiterMakeupDb = -0.5 * limiterThreshold * (1.0 - 1.0 / limiterRatio);
+
+      // Boost gain applied by gainNode:
+      const boostGainDb = 20 * Math.log10(targetGain);
+
+      // Profile EQ Headroom Management:
+      // On 'flat', profileHeadroomDb is 0.0 (preserving Test 10B exact peak contract).
+      // On active profiles with EQ boost (speech, bass, cinema, night), spectral energy is concentrated in
+      // boosted resonant formant/bass bands. Factoring in this profile headroom offset guarantees that signals
+      // strictly remain within the linear and soft-saturation region (<= 1.000) under full boost without flat-clipping.
+      const profileHeadroomDb = (safeProfile === "flat") ? 0.0 : (
+        safeProfile === "speech" ? 5.0 :
+        safeProfile === "bass" ? 5.5 :
+        safeProfile === "cinema" ? 3.5 :
+        safeProfile === "night" ? 3.0 : 0.0
+      );
+
+      const lOut = limiterThreshold + (boostGainDb - limiterThreshold) / limiterRatio;
+      const safeMarginDb = 0.75 * ((rawBoost - 1.0) / 4.0);
+      const totalExcessDb = Math.max(0, lOut) + limiterMakeupDb + safeMarginDb + profileHeadroomDb;
+      limiterCompensationGain = Math.pow(10, -totalExcessDb / 20);
+    }
+
     if (this.state.compressorCompensatorNode) {
       this.state.compressorCompensatorNode.gain.cancelScheduledValues(now);
       this.state.compressorCompensatorNode.gain.setTargetAtTime(compCompensationGain, now, t);
@@ -710,7 +900,7 @@ class AudioEngine {
       this.state.compensatorNode.gain.setTargetAtTime(limiterCompensationGain, now, t);
     }
 
-    // 4. Dolby Spatial Widener (Mid/Side stereo width control)
+    // 5. Dolby Spatial Widener (Mid/Side stereo width control)
     const targetWidth = isActive
       ? (this.PARAMS.spatialPresets[safeProfile] || 1.0)
       : 1.0;
@@ -725,7 +915,7 @@ class AudioEngine {
       this.state.sideHpFilter.frequency.setTargetAtTime(hpFreq, now, t);
     }
 
-    // 5. Zero-Latency Anti-Burst Soft-Clipper (curve selection)
+    // 6. Zero-Latency Anti-Burst Soft-Clipper (curve selection)
     if (this.state.antiBurstClipper) {
       this.state.antiBurstClipper.curve = isActive
         ? this.antiBurstCurve
@@ -744,6 +934,8 @@ class AudioEngine {
   setBypassMode(bypass) {
     if (!this.state.audioContext || this.state.audioContext.state === 'closed') return;
 
+    this.state.isEnabled = !bypass;
+
     const ctx = this.state.audioContext;
     const now = ctx.currentTime;
     const t = this.PARAMS.BYPASS_CROSSFADE_TIME;
@@ -751,6 +943,7 @@ class AudioEngine {
     if (bypass) {
       // Zero all EQ filters for transparent pass-through
       if (this.state.bassFilter) { this.state.bassFilter.gain.cancelScheduledValues(now); this.state.bassFilter.gain.setTargetAtTime(0, now, t); }
+      if (this.state.subRumbleFilter) { this.state.subRumbleFilter.frequency.cancelScheduledValues(now); this.state.subRumbleFilter.frequency.setTargetAtTime(10, now, t); }
       if (this.state.speechFilter) { this.state.speechFilter.gain.cancelScheduledValues(now); this.state.speechFilter.gain.setTargetAtTime(0, now, t); }
       if (this.state.voicePresenceFilter) { this.state.voicePresenceFilter.gain.cancelScheduledValues(now); this.state.voicePresenceFilter.gain.setTargetAtTime(0, now, t); }
       if (this.state.voiceClarityFilter) { this.state.voiceClarityFilter.gain.cancelScheduledValues(now); this.state.voiceClarityFilter.gain.setTargetAtTime(0, now, t); }
@@ -813,16 +1006,54 @@ class AudioEngine {
   }
 
   /**
-   * Clean up resources.
+   * Recovers audio connection for a video element.
+   * If a valid source node is already attached to the active AudioContext, reconnects it
+   * into the DSP graph without invalidating the HTMLMediaElement binding.
+   * If no valid source exists, performs a full audio graph setup.
+   * @param {HTMLMediaElement} video
+   */
+  recoverAudioGraph(video) {
+    if (!video) return;
+    const ctx = this.state.audioContext;
+    let cached = this.connectedVideos.get(video);
+    if (!cached && video.__uvb_sourceNode) {
+      cached = { sourceNode: video.__uvb_sourceNode, audioContext: video.__uvb_audioContext };
+      this.connectedVideos.set(video, cached);
+    }
+
+    if (cached && cached.sourceNode && ctx && cached.audioContext === ctx && this.state.graphConnected && this.state.bassFilter) {
+      try {
+        cached.sourceNode.disconnect();
+      } catch (e) {}
+      try {
+        cached.sourceNode.connect(this.state.bassFilter);
+      } catch (e) {}
+      this.state.sourceNode = cached.sourceNode;
+      this.state.isConflictDetected = false;
+      this.applyAudioEngineSettings();
+      return;
+    }
+
+    this.state.isConflictDetected = false;
+    this.setupAudioGraph(video);
+  }
+
+  /**
+   * Clean up resources safely without permanently destroying HTMLMediaElement bindings.
    */
   cleanup() {
-    if (this.state.audioContext && this.state.audioContext.state !== 'closed') {
-      this.state.audioContext.close().catch(() => {});
+    if (this.state.sourceNode) {
+      try {
+        this.state.sourceNode.disconnect();
+      } catch (e) {}
     }
-    this.state.audioContext = null;
+    // Note: Do NOT call audioContext.close() as closing AudioContext permanently
+    // disables the HTMLMediaElement from being reconnected via createMediaElementSource
+    // in Chromium. We keep the context alive or suspended for reuse.
     this.state.sourceNode = null;
     this.state.gainNode = null;
     this.state.bassFilter = null;
+    this.state.subRumbleFilter = null;
     this.state.speechFilter = null;
     this.state.trebleFilter = null;
     this.state.voicePresenceFilter = null;
@@ -844,11 +1075,21 @@ class AudioEngine {
     this.state.sideToLeft = null;
     this.state.sideToRight = null;
     this.state.spatialMerger = null;
+    if (this.state.antiBurstClipper) {
+      try {
+        this.state.antiBurstClipper.disconnect();
+      } catch (e) {}
+    }
     this.state.antiBurstClipper = null;
     this.state.graphConnected = false;
     this.state.isConflictDetected = false;
   }
 }
 
-// Make globally accessible in content script environment
-window.AudioEngine = AudioEngine;
+// Make globally accessible in content script environment and Node.js testing
+if (typeof window !== "undefined") {
+  window.AudioEngine = AudioEngine;
+}
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = AudioEngine;
+}

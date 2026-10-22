@@ -123,7 +123,106 @@ class PlatformDetector {
         id: "crunchyroll",
         name: "Crunchyroll",
         videoSelector: "video",
-        playerContainerSelector: ".video-player-wrapper, #vilos-player, .crunchyroll-player",
+        playerContainerSelector: ".video-player-wrapper, #vilos-player, .crunchyroll-player, [data-testid='vilos-player'], body",
+        containerSelector: "body",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      funimation: {
+        id: "funimation",
+        name: "Funimation",
+        videoSelector: "video, #funimation-player video",
+        playerContainerSelector: "#funimation-player, .video-js, .player-container, body",
+        containerSelector: "body, #root",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      hidive: {
+        id: "hidive",
+        name: "HIDIVE",
+        videoSelector: "video, #player video",
+        playerContainerSelector: ".player-container, #player-container, #player, body",
+        containerSelector: "body, #app",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      bilibili: {
+        id: "bilibili",
+        name: "Bilibili",
+        videoSelector: ".bpx-player-video-wrap video, .bilibili-player-video video, video",
+        playerContainerSelector: ".bpx-player-container, .bilibili-player, .player-mobile-wrapper, body",
+        containerSelector: "body, #app, #biliMainHeader",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      hianime: {
+        id: "hianime",
+        name: "HiAnime",
+        videoSelector: "video, #player video, .jw-video, .vjs-tech",
+        playerContainerSelector: "#player-wrapper, #iframe-embed, .player-frame, body",
+        containerSelector: "body, #wrapper",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      aniwatch: {
+        id: "aniwatch",
+        name: "AniWatch",
+        videoSelector: "video, #player video, .jw-video, .vjs-tech",
+        playerContainerSelector: "#player-wrapper, .player-frame, body",
+        containerSelector: "body, #wrapper",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      animepahe: {
+        id: "animepahe",
+        name: "AnimePahe",
+        videoSelector: "video, #player video",
+        playerContainerSelector: ".theatre-container, #player, .embed-responsive, body",
+        containerSelector: "body",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      aniwave: {
+        id: "aniwave",
+        name: "AniWave",
+        videoSelector: "video, #player video",
+        playerContainerSelector: "#player, #player-wrapper, .player-frame, body",
+        containerSelector: "body",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      gogoanime: {
+        id: "gogoanime",
+        name: "Gogoanime",
+        videoSelector: "video, .play-video video",
+        playerContainerSelector: ".play-video, #load, .anime_video_body, body",
+        containerSelector: "body",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      animeflv: {
+        id: "animeflv",
+        name: "AnimeFLV",
+        videoSelector: "video, #video_player video",
+        playerContainerSelector: ".player-container, #video_player, body",
+        containerSelector: "body",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      kickassanime: {
+        id: "kickassanime",
+        name: "KickAssAnime",
+        videoSelector: "video, #player video",
+        playerContainerSelector: "#player, .ka-player, body",
+        containerSelector: "body",
+        navigationDetection: "mutationobserver",
+        reinitDelay: 1000
+      },
+      retrocrush: {
+        id: "retrocrush",
+        name: "RetroCrush",
+        videoSelector: "video, .vjs-tech",
+        playerContainerSelector: ".vjs-tech, .video-player, body",
         containerSelector: "body",
         navigationDetection: "mutationobserver",
         reinitDelay: 1000
@@ -149,7 +248,7 @@ class PlatformDetector {
       generic: {
         id: "generic",
         name: "Generic Site",
-        videoSelector: "video",
+        videoSelector: "video, audio",
         playerContainerSelector: "body",
         containerSelector: "body",
         navigationDetection: "mutationobserver",
@@ -159,12 +258,26 @@ class PlatformDetector {
   }
 
   /**
-   * Identifies the current platform by checking the window hostname.
+   * Identifies the current platform by checking the window hostname or supplied URL.
    * Falls back to 'generic' configuration if domain is unmatched.
+   * @param {string} [urlOrHostname] - Optional URL or hostname to evaluate.
    * @returns {Object} Configuration object for the detected platform.
    */
-  static getDetectedPlatform() {
-    const hostname = window.location.hostname.toLowerCase();
+  static getDetectedPlatform(urlOrHostname) {
+    let hostname = "";
+    if (typeof urlOrHostname === "string" && urlOrHostname.length > 0) {
+      try {
+        if (urlOrHostname.includes("://")) {
+          hostname = new URL(urlOrHostname).hostname.toLowerCase();
+        } else {
+          hostname = urlOrHostname.toLowerCase();
+        }
+      } catch (e) {
+        hostname = urlOrHostname.toLowerCase();
+      }
+    } else if (typeof window !== "undefined" && window.location && window.location.hostname) {
+      hostname = window.location.hostname.toLowerCase();
+    }
     const configs = this.CONFIGS;
 
     if (hostname.includes("youtube.com") || hostname.includes("youtube-nocookie.com")) {
@@ -205,6 +318,42 @@ class PlatformDetector {
     }
     if (hostname.includes("crunchyroll.com")) {
       return configs.crunchyroll;
+    }
+    if (hostname.includes("funimation.com")) {
+      return configs.funimation;
+    }
+    if (hostname.includes("hidive.com")) {
+      return configs.hidive;
+    }
+    if (hostname.includes("bilibili.tv") || hostname.includes("bilibili.com")) {
+      return configs.bilibili;
+    }
+    if (hostname.includes("hianime.")) {
+      return configs.hianime;
+    }
+    if (hostname.includes("aniwatch") || hostname.includes("zoro.")) {
+      return configs.aniwatch;
+    }
+    if (hostname.includes("animepahe.")) {
+      return configs.animepahe;
+    }
+    if (hostname.includes("aniwave.") || hostname.includes("9anime.")) {
+      return configs.aniwave;
+    }
+    if (hostname.includes("gogoanime") || hostname.includes("anitaku.")) {
+      return configs.gogoanime;
+    }
+    if (hostname.includes("kickassanime") || hostname.includes("kaas.am")) {
+      return configs.kickassanime;
+    }
+    if (hostname.includes("animeflv.")) {
+      return configs.animeflv;
+    }
+    if (hostname.includes("retrocrush.tv")) {
+      return configs.retrocrush;
+    }
+    if (hostname.includes("megacloud.tv") || hostname.includes("rapid-cloud.")) {
+      return configs.hianime;
     }
     if (hostname.includes("twitch.tv")) {
       return configs.twitch;
