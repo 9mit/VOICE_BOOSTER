@@ -635,7 +635,7 @@ class AudioEngine {
 
       this.state.sourceNode = streamSource;
       this.applyAudioEngineSettings();
-      this.resumeAudioContext();
+      this.resumeAudioContext(true);
     } catch (err) {
       // Setup audio stream error
     }
@@ -994,9 +994,9 @@ class AudioEngine {
    * @param {boolean} bypass - True to bypass all processing, false to re-engage.
    */
   setBypassMode(bypass) {
-    if (!this.state.audioContext || this.state.audioContext.state === 'closed') return;
-
     this.state.isEnabled = !bypass;
+
+    if (!this.state.audioContext || this.state.audioContext.state === 'closed') return;
 
     const ctx = this.state.audioContext;
     const now = ctx.currentTime;
