@@ -362,10 +362,129 @@ class PlatformDetector {
       return configs.spotify;
     }
 
-    // Generic site fallback
-    return configs.generic;
+    // Generic site fallback with dynamically extracted website name
+    const detectedName = this.formatWebsiteName(hostname);
+    return {
+      ...configs.generic,
+      name: detectedName
+    };
+  }
+
+  /**
+   * Formats a raw hostname or URL into a clean, human-readable website name.
+   * Accurately extracts branding for popular and custom sites.
+   * @param {string} rawHost - Raw hostname or URL string
+   * @returns {string} Clean website name (e.g. "Reddit", "Vimeo", "YouTube")
+   */
+  static formatWebsiteName(rawHost) {
+    if (!rawHost || typeof rawHost !== "string") {
+      return "Generic Site";
+    }
+
+    let host = rawHost.trim().toLowerCase();
+    try {
+      if (host.includes("://")) {
+        host = new URL(host).hostname.toLowerCase();
+      } else {
+        host = host.split("/")[0].split(":")[0];
+      }
+    } catch (e) {
+      host = host.split("/")[0].split(":")[0];
+    }
+
+    // Strip common subdomains
+    host = host.replace(/^(www\d?|m|mobile|web|open|app|play|watch|en)\./i, "");
+
+    // Direct platform dictionary
+    const PLATFORM_NAMES = {
+      "youtube.com": "YouTube",
+      "youtube-nocookie.com": "YouTube",
+      "youtu.be": "YouTube",
+      "netflix.com": "Netflix",
+      "jiocinema.com": "JioCinema",
+      "jiohotstar.com": "JioHotstar",
+      "hotstar.com": "Disney+ Hotstar",
+      "disneyplus.com": "Disney+",
+      "primevideo.com": "Prime Video",
+      "amazon.com": "Amazon Prime Video",
+      "amazon.co.uk": "Amazon Prime Video",
+      "amazon.de": "Amazon Prime Video",
+      "amazon.in": "Amazon Prime Video",
+      "sonyliv.com": "SonyLIV",
+      "zee5.com": "Zee5",
+      "hulu.com": "Hulu",
+      "max.com": "Max",
+      "hbomax.com": "HBO Max",
+      "apple.com": "Apple TV+",
+      "peacocktv.com": "Peacock",
+      "paramountplus.com": "Paramount+",
+      "crunchyroll.com": "Crunchyroll",
+      "funimation.com": "Funimation",
+      "hidive.com": "HIDIVE",
+      "bilibili.com": "Bilibili",
+      "bilibili.tv": "Bilibili",
+      "twitch.tv": "Twitch",
+      "spotify.com": "Spotify",
+      "reddit.com": "Reddit",
+      "vimeo.com": "Vimeo",
+      "soundcloud.com": "SoundCloud",
+      "dailymotion.com": "Dailymotion",
+      "tiktok.com": "TikTok",
+      "twitter.com": "Twitter",
+      "x.com": "X",
+      "facebook.com": "Facebook",
+      "instagram.com": "Instagram",
+      "coursera.org": "Coursera",
+      "udemy.com": "Udemy",
+      "khanacademy.org": "Khan Academy",
+      "ted.com": "TED",
+      "rumble.com": "Rumble",
+      "bitchute.com": "BitChute",
+      "patreon.com": "Patreon",
+      "audiomack.com": "Audiomack",
+      "mixcloud.com": "Mixcloud",
+      "bandcamp.com": "Bandcamp",
+      "deezer.com": "Deezer",
+      "tunein.com": "TuneIn",
+      "bbc.co.uk": "BBC iPlayer",
+      "bbc.com": "BBC"
+    };
+
+    for (const [domain, name] of Object.entries(PLATFORM_NAMES)) {
+      if (host.includes(domain)) {
+        return name;
+      }
+    }
+
+    // Dynamic brand extraction from domain name
+    const parts = host.split(".").filter(Boolean);
+    if (parts.length >= 2) {
+      // Account for two-part country TLDs (e.g. .co.uk, .com.au)
+      const isTwoPartTld = parts.length > 2 && ["co", "com", "org", "net", "edu", "gov", "ac"].includes(parts[parts.length - 2]);
+      const brandIndex = isTwoPartTld ? parts.length - 3 : parts.length - 2;
+      const brand = parts[brandIndex >= 0 ? brandIndex : 0];
+      if (brand && brand.length > 1) {
+        return brand
+          .replace(/[-_]+/g, " ")
+          .split(" ")
+          .filter(Boolean)
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+      }
+    }
+
+    if (host && host.length > 0 && host !== "localhost") {
+      return host.charAt(0).toUpperCase() + host.slice(1);
+    }
+
+    return "Generic Site";
   }
 }
 
-// Make globally accessible in content script environment
-window.PlatformDetector = PlatformDetector;
+// Make globally accessible in content script and popup environments
+if (typeof window !== "undefined") {
+  window.PlatformDetector = PlatformDetector;
+}
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { PlatformDetector };
+}

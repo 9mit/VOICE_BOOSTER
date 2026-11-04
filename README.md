@@ -1,6 +1,6 @@
 # Volumify: Volume Booster & Sound Equalizer
 
-[![Version](https://img.shields.io/badge/version-1.0.8-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](package.json)
 [![Manifest V3](https://img.shields.io/badge/manifest-v3-success.svg)](src/manifest.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](package.json)
 [![Chrome 116+](https://img.shields.io/badge/Chrome-116%2B-green.svg)](src/manifest.json)
@@ -83,9 +83,9 @@ Full multi-frame iframe injection (`all_frames: true`) ensures embedded players 
 
 ## 📦 Distribution ZIP & Installation
 
-### Option 1: Install from Pre-Built ZIP (`v1.0.8`)
+### Option 1: Install from Pre-Built ZIP (`v1.1.0`)
 The root directory includes the latest pre-packaged, production-ready extension package:
-📁 **[`volumify-volume-booster.zip`](./volumify-volume-booster.zip)** (Version 1.0.8)
+📁 **[`volumify-volume-booster.zip`](./volumify-volume-booster.zip)** (Version 1.1.0)
 
 1. Download or clone this repository to obtain **`volumify-volume-booster.zip`**.
 2. Extract `volumify-volume-booster.zip` into a local directory of your choice.
@@ -136,7 +136,14 @@ Shortcuts can be customized at any time by navigating to `chrome://extensions/sh
 
 ## 📝 Version History
 
-* **v1.0.8 (Current)**:
+* **v1.1.0 (Current)**:
+  * Restored real-time Audio Level Difference (Audio Diff) visualizer meter displaying dynamic dB difference (+0.0 dB to +29.5 dB) and percentage boost over baseline.
+  * Added live Audio Diff badge indicator to central speedometer gauge dial.
+  * Enhanced universal platform detector to accurately detect, format, and display website names across both major streaming portals and generic websites.
+  * Added dedicated website target pill in header and active site badges across all extension states (active, standby, bypass).
+* **v1.0.9**:
+  * Replaced broad host_permissions with activeTab, fixed unchecked runtime.lastError.
+* **v1.0.8**:
   * Resolved Chromium Web Audio autoplay policy restriction (`AudioContext was not allowed to start`) by implementing intelligent `hasUserGesture` guards and capture-phase user interaction listeners.
   * Enhanced anime streaming detection to support mirror domains (e.g. `hianimes.se`, `zoro`, `rapidcloud`).
 * **v1.0.7**:

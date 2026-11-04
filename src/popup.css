@@ -189,6 +189,12 @@ body::-webkit-scrollbar-thumb {
   transition: fill 0.3s var(--curve);
 }
 
+.logo-text-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .logo-title {
   font-size: 14px;
   font-weight: 900;
@@ -196,6 +202,47 @@ body::-webkit-scrollbar-thumb {
   text-transform: uppercase;
   color: #ffffff;
   text-shadow: 1px 1px 0px var(--ink-black);
+  line-height: 1.1;
+}
+
+/* Website Target Pill in Header */
+.website-target-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--canvas-bg);
+  border: 1px solid var(--ink-border);
+  border-radius: 4px;
+  padding: 1px 6px 1px 5px;
+  max-width: 140px;
+  overflow: hidden;
+  box-shadow: 1px 1px 0px var(--ink-black);
+}
+
+.website-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--theme-color-primary);
+  box-shadow: 0 0 5px var(--theme-glow);
+  flex-shrink: 0;
+  animation: pulseWebsiteDot 2.2s infinite ease-in-out;
+}
+
+@keyframes pulseWebsiteDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+
+.website-name {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-right {
@@ -326,6 +373,34 @@ body::-webkit-scrollbar-thumb {
   text-transform: uppercase;
   margin-bottom: 6px;
   color: #ffffff;
+}
+
+.state-site-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--canvas-bg);
+  border: 1.5px solid var(--ink-border-bold);
+  border-radius: 6px;
+  padding: 3px 9px;
+  margin-bottom: 10px;
+  box-shadow: var(--comic-shadow-sm);
+}
+
+.site-badge-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.site-badge-name {
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--theme-color-primary);
 }
 
 .state-subtitle {
@@ -503,6 +578,160 @@ body::-webkit-scrollbar-thumb {
   color: #ff2d55;
   border-color: #ff2d55;
   background: rgba(255, 45, 85, 0.15);
+}
+
+/* Comic Audio Diff Tag in Dial */
+.dial-diff-tag {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--theme-color-primary);
+  margin-top: 3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(0, 240, 254, 0.08);
+  border: 1px solid var(--theme-color-primary);
+  box-shadow: 1px 1px 0px var(--ink-black);
+  transition: all 0.2s var(--curve);
+}
+
+.dial-diff-tag.disabled {
+  color: var(--text-muted);
+  border-color: var(--ink-border);
+  background: var(--canvas-bg);
+  opacity: 0.5;
+}
+
+/* =========================================================
+   Audio Level Difference (Audio Diff) Meter Panel
+   ========================================================= */
+
+.audio-diff-panel {
+  background: var(--panel-bg);
+  border: 2px solid var(--ink-border-bold);
+  border-radius: 10px;
+  padding: 8px 12px 9px;
+  margin-bottom: 8px;
+  box-shadow: var(--comic-shadow-sm);
+  transition: border-color 0.2s;
+}
+
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.diff-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diff-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--theme-color-primary);
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 3px var(--theme-glow));
+}
+
+.diff-label {
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.diff-readout {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.diff-db {
+  font-size: 11.5px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  color: var(--theme-color-primary);
+  background: var(--canvas-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--ink-border);
+  box-shadow: 1px 1px 0px var(--ink-black);
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.diff-pct {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+
+/* Audio Diff Meter Bar & Scale */
+.diff-meter-wrapper {
+  position: relative;
+}
+
+.diff-meter-bar {
+  position: relative;
+  width: 100%;
+  height: 9px;
+  background: var(--canvas-bg);
+  border: 1.5px solid var(--ink-border-bold);
+  border-radius: 5px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.diff-baseline-mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ffffff;
+  opacity: 0.6;
+  z-index: 2;
+}
+
+.diff-meter-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--theme-color-primary) 0%, var(--theme-color-secondary) 60%, #ff2d55 100%);
+  border-radius: 3px;
+  transition: width 0.1s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 8px var(--theme-glow);
+}
+
+.diff-meter-peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #ffffff;
+  left: 0%;
+  border-radius: 1px;
+  box-shadow: 0 0 4px #ffffff;
+  transition: left 0.25s ease-out;
+  opacity: 0.85;
+  z-index: 3;
+}
+
+.diff-scale-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  font-weight: 900;
+  color: var(--text-muted);
+  margin-top: 4px;
+  padding: 0 1px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 }
 
 /* =========================================================

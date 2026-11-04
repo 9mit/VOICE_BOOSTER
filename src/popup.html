@@ -20,7 +20,13 @@
             <path d="M18.5 2L12 10.5h4.5L10 22l6.5-8.5H12L18.5 2z"/>
           </svg>
         </div>
-        <h1 class="logo-title">Booster Pro</h1>
+        <div class="logo-meta">
+          <h1 class="logo-title">Booster Pro</h1>
+          <div class="website-target-pill" id="website-target-pill" title="Target Media Website">
+            <span class="website-dot"></span>
+            <span class="website-name" id="current-website-name">Generic Site</span>
+          </div>
+        </div>
       </div>
       <div class="header-right">
         <div class="status-indicator" id="status-badge">OFFLINE</div>
@@ -57,6 +63,37 @@
           <div class="dial-center">
             <span class="dial-value" id="simple-boost-val-text">100%</span>
             <span class="dial-label" id="simple-boost-status-label">Normal</span>
+            <span class="dial-diff-tag" id="dial-diff-tag">+0.0 dB Diff</span>
+          </div>
+        </div>
+
+        <!-- Audio Level Differences / Audio Diff Meter Section -->
+        <div class="audio-diff-panel" id="audio-diff-panel">
+          <div class="diff-header">
+            <div class="diff-title-wrap">
+              <svg class="diff-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3v18M18 8v8M6 11v2M22 6v12M2 9v6"/>
+              </svg>
+              <span class="diff-label">Audio Level Diff</span>
+            </div>
+            <div class="diff-readout">
+              <span class="diff-db" id="audio-diff-db">+0.0 dB</span>
+              <span class="diff-pct" id="audio-diff-pct">(+0%)</span>
+            </div>
+          </div>
+          <div class="diff-meter-wrapper">
+            <div class="diff-meter-bar">
+              <div class="diff-baseline-mark" title="Baseline 100% (0.0 dB)"></div>
+              <div class="diff-meter-fill" id="audio-diff-meter-fill"></div>
+              <div class="diff-meter-peak" id="audio-diff-meter-peak"></div>
+            </div>
+            <div class="diff-scale-labels">
+              <span>0dB</span>
+              <span>+6dB</span>
+              <span>+12dB</span>
+              <span>+20dB</span>
+              <span>+30dB</span>
+            </div>
           </div>
         </div>
 
@@ -129,6 +166,10 @@
           </svg>
         </div>
         <p class="state-title">Awaiting Media</p>
+        <div class="state-site-badge" id="no-video-site-badge">
+          <span class="site-badge-label">Active Site:</span>
+          <span class="site-badge-name" id="no-video-site-name">Generic Site</span>
+        </div>
         <p class="state-subtitle" id="no-video-subtitle">Play streaming content on YouTube, Netflix, or Prime Video to begin volume processing.</p>
         <button class="premium-action-btn secondary" id="retry-btn">Force Scan</button>
       </div>

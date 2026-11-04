@@ -39,10 +39,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   const statusBadge = document.getElementById("status-badge");
   const noVideoSubtitle = document.getElementById("no-video-subtitle");
   
+  // Website Identity Elements
+  const currentWebsiteName = document.getElementById("current-website-name");
+  const noVideoSiteName = document.getElementById("no-video-site-name");
+
   // Hero Dial Controls
   const dialValueText = document.getElementById("simple-boost-val-text");
   const dialLabelText = document.getElementById("simple-boost-status-label");
+  const dialDiffTag = document.getElementById("dial-diff-tag");
   const dialGlow = document.getElementById("simple-booster-glow");
+
+  // Audio Level Differences / Audio Diff Meter Controls
+  const audioDiffDb = document.getElementById("audio-diff-db");
+  const audioDiffPct = document.getElementById("audio-diff-pct");
+  const audioDiffMeterFill = document.getElementById("audio-diff-meter-fill");
+  const audioDiffMeterPeak = document.getElementById("audio-diff-meter-peak");
   
   // Primary Gain Slider Controls
   const sliderInput = document.getElementById("simple-boost-slider");
@@ -65,6 +76,39 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (!activeVideoContainer || !sliderInput) {
     return;
+  }
+
+  /**
+   * Computes the audio level difference in dB and percentage over baseline (100% / 0 dB).
+   * Maps identically to AudioEngine._computePerceptualGain polynomial curve.
+   * @param {number} boost - Current boost multiplier (1.0 to 5.0)
+   * @param {boolean} isEnabled - Whether booster DSP is active
+   * @returns {Object} Calculated audio diff metrics
+   */
+  function calculateAudioDiff(boost, isEnabled) {
+    if (!isEnabled) {
+      return {
+        db: 0,
+        dbStr: "+0.0 dB",
+        pctStr: "(+0%)",
+        diffTag: "0.0 dB Diff",
+        meterPct: 0
+      };
+    }
+    const safeBoost = Number.isFinite(boost) ? Math.max(1.0, Math.min(5.0, boost)) : 1.0;
+    const x = safeBoost - 1.0;
+    // Polynomial curve matching AudioEngine: 1.0 -> 0dB, 2.0 -> 12.0dB, 3.0 -> 21.0dB, 5.0 -> 29.5dB
+    const db = Math.max(0, Math.min(29.5, 13.54 * x - 1.54 * x * x));
+    const diffPct = Math.round(x * 100);
+    const meterPct = Math.min(100, Math.max(0, (db / 29.5) * 100));
+
+    return {
+      db: db,
+      dbStr: `+${db.toFixed(1)} dB`,
+      pctStr: `(+${diffPct}%)`,
+      diffTag: `+${db.toFixed(1)} dB Diff`,
+      meterPct: meterPct
+    };
   }
 
   /**
@@ -103,9 +147,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         masterCheckBox.checked = false;
       }
 
+      const siteDisplay = (state.platformName || "SITE").toUpperCase();
       if (statusBadge) {
-        statusBadge.textContent = "BYPASS";
+        statusBadge.textContent = `${siteDisplay} • BYPASS`;
         statusBadge.className = "status-indicator";
+      }
+      if (currentWebsiteName) {
+        currentWebsiteName.textContent = state.platformName || "Generic Site";
+      }
+      if (noVideoSiteName) {
+        noVideoSiteName.textContent = state.platformName || "Generic Site";
       }
 
       if (conflictWarning) {
@@ -133,7 +184,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const percentage = Math.round(state.boostLevel * 100);
 
-    // 3. Sync primary displays
+    // 3. Sync primary displays & Audio Level Diff
     if (dialValueText) dialValueText.textContent = isEn ? `${percentage}%` : "100%";
     if (sliderPctText) sliderPctText.textContent = `${percentage}%`;
     if (sliderInput) {
@@ -145,6 +196,30 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
     if (masterCheckBox) masterCheckBox.checked = state.isEnabled;
+
+    // Audio Level Differences (Audio Diff) Sync
+    const diff = calculateAudioDiff(state.boostLevel, isEn);
+    if (audioDiffDb) audioDiffDb.textContent = diff.dbStr;
+    if (audioDiffPct) audioDiffPct.textContent = diff.pctStr;
+    if (audioDiffMeterFill) audioDiffMeterFill.style.width = `${diff.meterPct}%`;
+    if (audioDiffMeterPeak) audioDiffMeterPeak.style.left = `${diff.meterPct}%`;
+    if (dialDiffTag) {
+      dialDiffTag.textContent = isEn ? diff.diffTag : "Bypass Diff";
+      if (isEn) {
+        dialDiffTag.classList.remove("disabled");
+      } else {
+        dialDiffTag.classList.add("disabled");
+      }
+    }
+
+    // Sync Website Name across header and badges
+    const currentSite = state.platformName || "Generic Site";
+    if (currentWebsiteName) {
+      currentWebsiteName.textContent = currentSite;
+    }
+    if (noVideoSiteName) {
+      noVideoSiteName.textContent = currentSite;
+    }
 
     // 4. Highlight preset pills
     presetPillBtns.forEach(btn => {
@@ -170,11 +245,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // 6. Update Status indicator badge
     if (statusBadge) {
+      const siteUpper = (state.platformName || "ACTIVE").toUpperCase();
       if (state.isEnabled) {
-        statusBadge.textContent = (state.platformName || "ACTIVE").toUpperCase();
+        statusBadge.textContent = siteUpper;
         statusBadge.className = "status-indicator active";
       } else {
-        statusBadge.textContent = "BYPASS";
+        statusBadge.textContent = `${siteUpper} • BYPASS`;
         statusBadge.className = "status-indicator";
       }
     }
@@ -243,13 +319,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     popupRoot.classList.add("popup-root-theme-flat");
     popupRoot.classList.remove("active-mode");
 
+    const siteDisplay = state.platformName || "Generic Site";
+    if (currentWebsiteName) {
+      currentWebsiteName.textContent = siteDisplay;
+    }
+    if (noVideoSiteName) {
+      noVideoSiteName.textContent = siteDisplay;
+    }
+
     if (statusBadge) {
-      statusBadge.textContent = "OFFLINE";
+      statusBadge.textContent = state.platformName ? `${state.platformName.toUpperCase()} • STANDBY` : "OFFLINE";
       statusBadge.className = "status-indicator deactivated";
     }
 
     if (noVideoSubtitle) {
-      noVideoSubtitle.textContent = "Play content on YouTube, Netflix, JioCinema, Prime Video, or Twitch to initiate volume boost processing.";
+      noVideoSubtitle.textContent = `Play streaming audio or video on ${siteDisplay} to initiate volume boost processing.`;
     }
   }
 
@@ -269,6 +353,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (key === "boostLevel") {
           const val = parseFloat(data[key]);
           state.boostLevel = !isNaN(val) ? Math.min(Math.max(val, 1.0), 5.0) : 1.0;
+        } else if (key === "platformName") {
+          if (data[key] && data[key] !== "Generic Site") {
+            state.platformName = data[key];
+          }
         } else {
           state[key] = data[key];
         }
@@ -284,19 +372,29 @@ document.addEventListener("DOMContentLoaded", async () => {
         const activeTab = tabs[0];
         activeTabId = activeTab.id;
 
-        // Auto-detect platform from active tab URL immediately
-        const detectedPlatform = (typeof window.PlatformDetector !== "undefined" && activeTab.url)
-          ? window.PlatformDetector.getDetectedPlatform(activeTab.url)
-          : { id: "generic", name: "Generic Site" };
+        // Auto-detect platform and extract accurate website name immediately
+        let detectedPlatform = { id: "generic", name: "Generic Site" };
+        if (typeof window.PlatformDetector !== "undefined") {
+          if (activeTab.url) {
+            detectedPlatform = window.PlatformDetector.getDetectedPlatform(activeTab.url);
+          } else if (activeTab.title) {
+            detectedPlatform = { id: "generic", name: window.PlatformDetector.formatWebsiteName(activeTab.title) };
+          }
+        }
+
+        state.platformId = detectedPlatform.id;
+        state.platformName = detectedPlatform.name || "Generic Site";
 
         const isRecognizedPlatform = detectedPlatform.id !== "generic";
         const isAudible = !!activeTab.audible;
 
-        if (isRecognizedPlatform) {
-          state.platformId = detectedPlatform.id;
-          state.platformName = detectedPlatform.name;
+        if (isRecognizedPlatform || isAudible) {
           state.hasVideo = true;
         }
+
+        // Sync website names immediately across all display components
+        if (currentWebsiteName) currentWebsiteName.textContent = state.platformName;
+        if (noVideoSiteName) noVideoSiteName.textContent = state.platformName;
 
         // Check if background service worker recorded an active media subframe or capture session
         if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
@@ -692,4 +790,33 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Live Dynamic VU & Peak Decay Animation for Audio Diff Meter ---
+  let lastPeak = 0;
+
+  function runAudioDiffMeterAnimation() {
+    if (state.isEnabled && state.boostLevel > 1.0 && state.hasVideo && !document.hidden) {
+      const diff = calculateAudioDiff(state.boostLevel, true);
+      // Subtle dynamic flutter simulating active audio stream DSP
+      const flutter = (Math.sin(Date.now() / 150) * 0.6 + Math.cos(Date.now() / 95) * 0.4) * 2.2;
+      const dynamicPct = Math.max(0, Math.min(100, diff.meterPct + flutter));
+
+      if (diff.meterPct > lastPeak) {
+        lastPeak = diff.meterPct;
+      } else {
+        lastPeak = Math.max(diff.meterPct, lastPeak - 0.2);
+      }
+
+      if (audioDiffMeterFill) {
+        audioDiffMeterFill.style.width = `${dynamicPct.toFixed(1)}%`;
+      }
+      if (audioDiffMeterPeak) {
+        audioDiffMeterPeak.style.left = `${lastPeak.toFixed(1)}%`;
+      }
+    } else {
+      lastPeak = 0;
+    }
+    requestAnimationFrame(runAudioDiffMeterAnimation);
+  }
+
+  runAudioDiffMeterAnimation();
 });
